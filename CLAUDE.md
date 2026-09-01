@@ -4,6 +4,7 @@
 AI Conversion Doctor for Shopify. Audits a store page-by-page (CRO + performance + SEO + images), scores it, prescribes fixes, and applies them with merchant approval.
 
 **Full spec:** `docs/FEATURES.md` — read it before building any feature.
+**Design/wireframes:** `docs/DESIGN.md` — read it before building any UI screen.
 
 ## Non-negotiable rules
 
