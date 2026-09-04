@@ -1,34 +1,218 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// StoreRx Prisma Schema
+// AI Conversion Doctor for Shopify
 
 generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "sqlite"
   url      = "file:dev.sqlite"
 }
 
+// ============================================
+// Shopify Session (required by shopify-app-session-storage-prisma)
+// ============================================
+
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+}
+
+// ============================================
+// StoreRx Models
+// ============================================
+
+// Shop settings and configuration
+model Shop {
+  id              String   @id @default(cuid())
+  domain          String   @unique
+  name            String?
+
+  // Brand voice sample for AI generation
+  brandVoice      String?
+
+  // Audit settings
+  auditSchedule   String   @default("weekly") // weekly, monthly, manual
+  emailSummary    Boolean  @default(true)
+  excludedPaths   String?  // JSON array of paths to skip
+
+  // Plan and billing
+  plan            String   @default("free") // free, starter, growth, pro
+  aiGenerationsUsed Int    @default(0)
+  aiGenerationsLimit Int   @default(5) // Based on plan
+  billingCycleStart DateTime?
+
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  audits          Audit[]
+  fixes           Fix[]
+  aiUsage         AiUsage[]
+}
+
+// Audit run
+model Audit {
+  id              String   @id @default(cuid())
+  shopId          String
+  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  // Status
+  status          String   @default("pending") // pending, running, completed, failed
+  progress        Int      @default(0) // 0-100
+  currentStep     String?
+
+  // Overall scores (0-100)
+  overallScore    Int?
+  conversionScore Int?
+  uxScore         Int?
+  performanceScore Int?
+  seoScore        Int?
+  productPagesScore Int?
+
+  // Counts
+  totalIssues     Int      @default(0)
+  highCount       Int      @default(0)
+  mediumCount     Int      @default(0)
+  lowCount        Int      @default(0)
+
+  // Error info if failed
+  error           String?
+
+  // Timestamps
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  // Relations
+  findings        Finding[]
+  pageScores      PageScore[]
+}
+
+// Individual finding (issue detected by rule engine)
+model Finding {
+  id              String   @id @default(cuid())
+  auditId         String
+  audit           Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  // Rule identification
+  ruleId          String   // e.g., prod.reviews.fold
+  pageType        String   // homepage, collection, product, cart, checkout, images, perf
+  severity        String   // high, medium, low
+
+  // Display
+  title           String
+  explanation     String?  // AI-generated explanation
+
+  // Evidence
+  evidenceType    String?  // selector, text, screenshot
+  evidenceValue   String?
+
+  // Fix info
+  fixableByAI     Boolean  @default(false)
+  fixType         String?  // product_description, alt_text, etc.
+  targetId        String?  // Resource ID (product, image, etc.)
+  targetTitle     String?
+
+  // Status
+  status          String   @default("open") // open, fixed, dismissed
+
+  createdAt       DateTime @default(now())
+}
+
+// Per-page scores from audit
+model PageScore {
+  id              String   @id @default(cuid())
+  auditId         String
+  audit           Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  // Page identification
+  pageType        String   // homepage, collection, product, cart
+  pageUrl         String
+  pageTitle       String?
+  resourceId      String?  // Shopify resource ID if applicable
+
+  // Scores
+  croScore        Int?
+  perfScore       Int?
+  issueCount      Int      @default(0)
+
+  // Performance metrics
+  lcp             Float?   // Largest Contentful Paint (seconds)
+  cls             Float?   // Cumulative Layout Shift
+  inp             Float?   // Interaction to Next Paint (ms)
+
+  // Screenshot paths (stored for 30 days)
+  mobileScreenshot String?
+  desktopScreenshot String?
+
+  lastScannedAt   DateTime @default(now())
+}
+
+// AI fix (preview → apply → undo)
+model Fix {
+  id              String   @id @default(cuid())
+  shopId          String
+  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  // Fix type and target
+  type            String   // product_description, seo_title, alt_text, etc.
+  targetId        String   // Resource ID
+  targetTitle     String
+
+  // Content
+  before          String   // Original value
+  after           String   // New value (editable in preview)
+
+  // Status
+  status          String   @default("preview") // preview, applied, undone
+
+  // Generation tracking
+  generationCount Int      @default(1)
+
+  // Timestamps
+  createdAt       DateTime @default(now())
+  appliedAt       DateTime?
+  undoneAt        DateTime?
+
+  // Undo expires 30 days after apply
+  undoExpiresAt   DateTime?
+}
+
+// AI usage tracking for cost management
+model AiUsage {
+  id              String   @id @default(cuid())
+  shopId          String
+  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  // Task info
+  task            String   // explain, description, alt_text, etc.
+  model           String   // gpt-4.1, gpt-4.1-mini
+
+  // Token usage
+  promptTokens    Int
+  completionTokens Int
+  totalTokens     Int
+
+  // Cost estimate (in cents)
+  estimatedCost   Float?
+
+  createdAt       DateTime @default(now())
 }
