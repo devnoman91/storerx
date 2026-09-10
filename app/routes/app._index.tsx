@@ -1,21 +1,18 @@
-import type { LoaderFunctionArgs, HeadersFunction, ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher } from "react-router";
+import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
+import { useLoaderData, useFetcher, Link } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { getScoreBand } from "../scoring";
 import prisma from "../db.server";
 import { collectAdminData } from "../collectors/admin";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
   // Get or create shop record
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) {
-    shop = await prisma.shop.create({
-      data: { domain: shopDomain },
-    });
+    shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
 
   // Get latest audit
@@ -25,81 +22,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     include: {
       findings: {
         where: { status: "open" },
-        orderBy: { severity: "asc" },
-        take: 5,
+        orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
       },
     },
   });
 
-  // Get fix count this month
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
+  // Count by severity
+  const critical = latestAudit?.findings.filter(f => f.severity === "high") || [];
+  const improvements = latestAudit?.findings.filter(f => f.severity === "medium") || [];
+  const minor = latestAudit?.findings.filter(f => f.severity === "low") || [];
 
+  // Get fix count
   const fixCount = await prisma.fix.count({
-    where: {
-      shopId: shop.id,
-      status: "applied",
-      appliedAt: { gte: monthStart },
-    },
+    where: { shopId: shop.id, status: "applied" },
   });
-
-  // Calculate days since last audit
-  const lastAuditDays = latestAudit?.completedAt
-    ? Math.floor((Date.now() - latestAudit.completedAt.getTime()) / (1000 * 60 * 60 * 24))
-    : null;
-
-  // Count open findings
-  const openFindings = await prisma.finding.count({
-    where: {
-      audit: { shopId: shop.id },
-      status: "open",
-    },
-  });
-
-  const highPriorityCount = await prisma.finding.count({
-    where: {
-      audit: { shopId: shop.id },
-      status: "open",
-      severity: "high",
-    },
-  });
-
-  // Map findings to prescriptions
-  const prescriptions = (latestAudit?.findings || []).map((f) => ({
-    id: f.id,
-    severity: f.severity as "high" | "medium" | "low",
-    title: f.title,
-    fixableByAI: f.fixableByAI,
-  }));
 
   return {
     shopDomain,
     hasAudit: !!latestAudit,
+    lastAuditDate: latestAudit?.completedAt?.toLocaleDateString() || null,
+    critical,
+    improvements,
+    minor,
+    fixCount,
     overallScore: latestAudit?.overallScore ?? 0,
-    scores: {
-      conversion: latestAudit?.conversionScore ?? 0,
-      ux: latestAudit?.uxScore ?? 0,
-      performance: latestAudit?.performanceScore ?? 0,
-      seo: latestAudit?.seoScore ?? 0,
-      productPages: latestAudit?.productPagesScore ?? 0,
-    },
-    trendDirection: "up" as const,
-    trendPoints: 0,
-    trendPeriod: "last month",
-    prescriptionsOpen: openFindings,
-    fixesApplied: fixCount,
-    fixesPeriod: "this month",
-    lastAuditDays,
-    highPriorityCount,
-    prescriptions,
-    isAuditing: false,
-    auditProgress: null as null | {
-      step: string;
-      current: number;
-      total: number;
-      percent: number;
-    },
   };
 };
 
@@ -107,104 +53,86 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  // Get shop record
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) {
     shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
 
-  // Collect shop data from Shopify API
+  // Collect shop data
   const shopData = await collectAdminData(admin);
 
-  // Create audit record
+  // Create audit
   const audit = await prisma.audit.create({
-    data: {
-      shopId: shop.id,
-      status: "running",
-      startedAt: new Date(),
-    },
+    data: { shopId: shop.id, status: "running", startedAt: new Date() },
   });
 
-  // Import rules and run audit
-  const { runRulesWithSummary } = await import("../rules");
-  const { collectStorefrontPage, buildAuditPageList } = await import("../collectors/storefront");
-  const { runLighthouseAudit } = await import("../collectors/lighthouse");
-  const { calculateScore, calculateStoreHealth } = await import("../scoring");
-
-  const allFindings: Array<{
-    ruleId: string;
-    pageType: string;
-    severity: string;
-    title: string;
-    evidenceType?: string;
-    evidenceValue?: string;
-    fixableByAI: boolean;
-    fixType?: string;
-    targetId?: string;
-  }> = [];
-
   try {
+    const { runRulesWithSummary } = await import("../rules");
+    const { collectStorefrontPage, buildAuditPageList } = await import("../collectors/storefront");
+    const { runLighthouseAudit } = await import("../collectors/lighthouse");
+    const { calculateStoreHealth } = await import("../scoring");
+
+    const allFindings: Array<{
+      ruleId: string;
+      pageType: string;
+      severity: string;
+      title: string;
+      fixableByAI: boolean;
+      fixType?: string;
+      targetId?: string;
+    }> = [];
+
     // Build page list
     const pages = buildAuditPageList(
       shopDomain,
-      shopData.collections.map((c) => ({ handle: c.handle })),
-      shopData.products.map((p) => ({ handle: p.handle }))
+      shopData.collections.map(c => ({ handle: c.handle })),
+      shopData.products.map(p => ({ handle: p.handle }))
     );
 
     // Scan homepage
     const homepage = await collectStorefrontPage(`https://${shopDomain}`, "homepage", { domain: shopDomain });
     const homepageRules = runRulesWithSummary("homepage", { html: homepage.html, shopData });
-    allFindings.push(...homepageRules.findings.map((f) => ({
+    allFindings.push(...homepageRules.findings.map(f => ({
       ruleId: f.ruleId,
       pageType: "homepage",
       severity: f.severity,
       title: f.title,
-      evidenceType: f.evidence?.type,
-      evidenceValue: f.evidence?.value,
       fixableByAI: f.fixableByAI,
       fixType: f.fixType,
       targetId: f.targetId,
     })));
 
     // Scan products
-    for (const page of pages.filter((p) => p.type === "product").slice(0, 3)) {
+    for (const page of pages.filter(p => p.type === "product").slice(0, 3)) {
       const prodPage = await collectStorefrontPage(page.url, "product", { domain: shopDomain });
       const prodRules = runRulesWithSummary("product", { html: prodPage.html, shopData });
-      allFindings.push(...prodRules.findings.map((f) => ({
+      allFindings.push(...prodRules.findings.map(f => ({
         ruleId: f.ruleId,
         pageType: "product",
         severity: f.severity,
         title: f.title,
-        evidenceType: f.evidence?.type,
-        evidenceValue: f.evidence?.value,
         fixableByAI: f.fixableByAI,
         fixType: f.fixType,
         targetId: f.targetId,
       })));
     }
 
-    // Run performance audit on homepage
+    // Run performance audit
     const perfResult = await runLighthouseAudit({ url: `https://${shopDomain}` });
-
-    // Calculate scores
     const storeHealth = calculateStoreHealth(allFindings as any);
 
-    // Update audit with results
+    // Update audit
     await prisma.audit.update({
       where: { id: audit.id },
       data: {
         status: "completed",
         completedAt: new Date(),
         overallScore: storeHealth.overall,
-        conversionScore: storeHealth.categories.find((c) => c.category === "conversion")?.score ?? 0,
-        uxScore: storeHealth.categories.find((c) => c.category === "ux")?.score ?? 0,
         performanceScore: perfResult.combinedScore,
-        seoScore: storeHealth.categories.find((c) => c.category === "seo")?.score ?? 0,
-        productPagesScore: storeHealth.categories.find((c) => c.category === "productPages")?.score ?? 0,
         totalIssues: allFindings.length,
-        highCount: allFindings.filter((f) => f.severity === "high").length,
-        mediumCount: allFindings.filter((f) => f.severity === "medium").length,
-        lowCount: allFindings.filter((f) => f.severity === "low").length,
+        highCount: allFindings.filter(f => f.severity === "high").length,
+        mediumCount: allFindings.filter(f => f.severity === "medium").length,
+        lowCount: allFindings.filter(f => f.severity === "low").length,
       },
     });
 
@@ -217,8 +145,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           pageType: f.pageType,
           severity: f.severity,
           title: f.title,
-          evidenceType: f.evidenceType,
-          evidenceValue: f.evidenceValue,
           fixableByAI: f.fixableByAI,
           fixType: f.fixType,
           targetId: f.targetId,
@@ -226,290 +152,217 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    return { success: true, auditId: audit.id };
+    return { success: true };
   } catch (error) {
     await prisma.audit.update({
       where: { id: audit.id },
-      data: {
-        status: "failed",
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
+      data: { status: "failed", error: String(error) },
     });
     return { success: false, error: String(error) };
   }
 };
 
-function ScoreRing({ score }: { score: number }) {
-  const band = getScoreBand(score);
-  const color = band === "critical" ? "#B98900" : band === "warning" ? "#B98900" : "#29845A";
-  const degrees = (score / 100) * 360;
+function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"; count: number }) {
+  const styles = {
+    critical: { bg: "#FEE2E2", color: "#991B1B", icon: "🔴" },
+    warning: { bg: "#FEF3C7", color: "#92400E", icon: "🟡" },
+    success: { bg: "#D1FAE5", color: "#065F46", icon: "🟢" },
+  };
+  const { bg, color, icon } = styles[type];
+  const labels = { critical: "Critical", warning: "To Improve", success: "Passed" };
 
   return (
-    <div
-      style={{
-        width: 160,
-        height: 160,
-        borderRadius: "50%",
-        background: `conic-gradient(${color} ${degrees}deg, #E3E3E3 0)`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <div
-        style={{
-          width: 128,
-          height: 128,
-          borderRadius: "50%",
-          background: "#fff",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <span style={{ fontSize: 44, fontWeight: 700, lineHeight: 1 }}>{score}</span>
-        <span style={{ fontSize: 12, color: "#6D7175" }}>out of 100</span>
-      </div>
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "8px 16px",
+      background: bg,
+      borderRadius: 8,
+      fontSize: 14,
+      fontWeight: 600,
+      color,
+    }}>
+      <span>{icon}</span>
+      <span>{count} {labels[type]}</span>
     </div>
   );
 }
 
-function ScoreBar({ label, score }: { label: string; score: number }) {
-  const band = getScoreBand(score);
-  const color = band === "critical" ? "#8E1F0B" : band === "warning" ? "#B98900" : "#29845A";
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "120px 32px 1fr",
-        gap: 12,
-        alignItems: "center",
-        fontSize: 13,
-      }}
-    >
-      <span>{label}</span>
-      <strong style={{ textAlign: "right" }}>{score}</strong>
-      <div style={{ height: 8, background: "#E3E3E3", borderRadius: 4 }}>
-        <div
-          style={{
-            width: `${score}%`,
-            height: 8,
-            background: color,
-            borderRadius: 4,
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  suffix,
-}: {
-  label: string;
-  value: number | string;
-  suffix?: string;
-}) {
-  return (
-    <s-box padding="base" borderWidth="base" borderRadius="large">
-      <div style={{ fontSize: 13, color: "#6D7175", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 700 }}>
-        {value}{" "}
-        {suffix && (
-          <span style={{ fontSize: 13, fontWeight: 400, color: "#6D7175" }}>{suffix}</span>
-        )}
-      </div>
-    </s-box>
-  );
-}
-
-function PrescriptionRow({
+function IssueCard({
   severity,
   title,
-  fixableByAI,
-  onView,
+  fixable,
   onFix,
+  onDismiss,
 }: {
   severity: "high" | "medium" | "low";
   title: string;
-  fixableByAI: boolean;
-  onView: () => void;
-  onFix: () => void;
+  fixable: boolean;
+  onFix?: () => void;
+  onDismiss?: () => void;
 }) {
-  const toneMap = {
-    high: "critical",
-    medium: "warning",
-    low: "info",
-  } as const;
+  const severityColors = {
+    high: "#EF4444",
+    medium: "#F59E0B",
+    low: "#6B7280",
+  };
 
   return (
-    <div
-      style={{
-        padding: "12px 20px",
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        borderBottom: "1px solid #E1E3E5",
-        fontSize: 13,
-      }}
-    >
-      <s-badge tone={toneMap[severity]}>
-        {severity.charAt(0).toUpperCase() + severity.slice(1)}
-      </s-badge>
-      <span style={{ flex: 1 }}>{title}</span>
-      {fixableByAI ? (
-        <s-button variant="primary" onClick={onFix}>
-          Fix with AI
-        </s-button>
-      ) : (
-        <s-button onClick={onView}>
-          View
-        </s-button>
-      )}
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      padding: "16px 20px",
+      borderBottom: "1px solid #E5E7EB",
+    }}>
+      <div style={{
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: severityColors[severity],
+        flexShrink: 0,
+      }} />
+      <span style={{ flex: 1, fontSize: 14 }}>{title}</span>
+      <div style={{ display: "flex", gap: 8 }}>
+        {fixable ? (
+          <s-button variant="primary" onClick={onFix}>Fix with AI</s-button>
+        ) : (
+          <s-button onClick={onFix}>How to Fix</s-button>
+        )}
+        <s-button variant="tertiary" onClick={onDismiss}>Dismiss</s-button>
+      </div>
     </div>
   );
 }
 
-export default function Overview() {
+export default function Dashboard() {
   const data = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
-  const isAuditing = fetcher.state !== "idle";
+  const isScanning = fetcher.state !== "idle";
+
+  const totalIssues = data.critical.length + data.improvements.length + data.minor.length;
 
   return (
-    <s-page heading="Overview">
+    <s-page heading="Store Health">
       <fetcher.Form method="post">
-        <s-button slot="primary-action" type="submit" disabled={isAuditing}>
-          {isAuditing ? "Running audit..." : "Run audit"}
+        <s-button slot="primary-action" type="submit" disabled={isScanning}>
+          {isScanning ? "Scanning..." : "Scan Store"}
         </s-button>
       </fetcher.Form>
 
-      {/* Critical issues banner */}
-      {data.highPriorityCount > 0 && (
-        <s-banner tone="critical">
-          <strong>{data.highPriorityCount} high-priority problems are hurting your conversion.</strong>{" "}
-          Fixing them first has the biggest effect on sales.
-          <s-button slot="actions" variant="tertiary">
-            View
-          </s-button>
-        </s-banner>
+      {/* Status Summary */}
+      {data.hasAudit ? (
+        <>
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ fontSize: 13, color: "#6B7280", margin: "0 0 16px 0" }}>
+              Last scan: {data.lastAuditDate}
+            </p>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <StatusBadge type="critical" count={data.critical.length} />
+              <StatusBadge type="warning" count={data.improvements.length} />
+              <StatusBadge type="success" count={data.fixCount} />
+            </div>
+          </div>
+
+          {/* Critical Issues */}
+          {data.critical.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px 0", color: "#991B1B" }}>
+                Fix Now ({data.critical.length})
+              </h2>
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
+                {data.critical.map((issue) => (
+                  <IssueCard
+                    key={issue.id}
+                    severity="high"
+                    title={issue.title}
+                    fixable={issue.fixableByAI}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Improvements */}
+          {data.improvements.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px 0", color: "#92400E" }}>
+                Improvements ({data.improvements.length})
+              </h2>
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
+                {data.improvements.slice(0, 5).map((issue) => (
+                  <IssueCard
+                    key={issue.id}
+                    severity="medium"
+                    title={issue.title}
+                    fixable={issue.fixableByAI}
+                  />
+                ))}
+                {data.improvements.length > 5 && (
+                  <div style={{ padding: 16, textAlign: "center", color: "#6B7280", fontSize: 13 }}>
+                    +{data.improvements.length - 5} more improvements
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* No Issues */}
+          {totalIssues === 0 && (
+            <div style={{
+              textAlign: "center",
+              padding: 48,
+              background: "#F0FDF4",
+              borderRadius: 12,
+            }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
+              <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0", color: "#065F46" }}>
+                Your store looks great!
+              </h2>
+              <p style={{ fontSize: 14, color: "#6B7280", margin: 0 }}>
+                No issues found. Run another scan anytime.
+              </p>
+            </div>
+          )}
+        </>
+      ) : (
+        /* No Audit Yet */
+        <div style={{
+          textAlign: "center",
+          padding: 48,
+          background: "#F9FAFB",
+          borderRadius: 12,
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0" }}>
+            Ready to check your store?
+          </h2>
+          <p style={{ fontSize: 14, color: "#6B7280", margin: "0 0 16px 0" }}>
+            We'll scan your pages and find ways to improve conversions.
+          </p>
+          <fetcher.Form method="post">
+            <s-button variant="primary" type="submit" disabled={isScanning}>
+              {isScanning ? "Scanning..." : "Start First Scan"}
+            </s-button>
+          </fetcher.Form>
+        </div>
       )}
 
-      {/* Store Health */}
-      <s-section heading="Store health">
-        <s-box padding="base" borderWidth="base" borderRadius="large">
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              marginBottom: 16,
-            }}
-          >
-            <span style={{ fontSize: 12, color: "#6D7175" }}>
-              Last check-up {data.lastAuditDays} days ago
-            </span>
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "260px 1fr",
-              gap: 32,
-              alignItems: "center",
-            }}
-          >
-            {/* Score ring + trend */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <ScoreRing score={data.overallScore} />
-            </div>
-
-            {/* Category scores */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <ScoreBar label="Conversion" score={data.scores.conversion} />
-              <ScoreBar label="UX" score={data.scores.ux} />
-              <ScoreBar label="Performance" score={data.scores.performance} />
-              <ScoreBar label="SEO" score={data.scores.seo} />
-              <ScoreBar label="Product pages" score={data.scores.productPages} />
-            </div>
-          </div>
-        </s-box>
-      </s-section>
-
-      {/* Metric cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 16,
-          marginTop: 16,
-        }}
-      >
-        <MetricCard
-          label="Prescriptions"
-          value={data.prescriptionsOpen}
-          suffix="open"
-        />
-        <MetricCard
-          label="Fixes applied"
-          value={data.fixesApplied}
-          suffix={data.fixesPeriod}
-        />
-        <MetricCard
-          label="Last audit"
-          value={data.lastAuditDays ?? "Never"}
-          suffix={data.lastAuditDays !== null ? "days ago" : ""}
-        />
-      </div>
-
-      {/* Top prescriptions */}
-      <s-section heading="Top prescriptions">
-        <s-box borderWidth="base" borderRadius="large" padding="none">
-          <div
-            style={{
-              padding: "16px 20px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              borderBottom: "1px solid #E1E3E5",
-            }}
-          >
-            <span style={{ fontSize: 14, fontWeight: 600 }}>Top prescriptions</span>
-            <s-link href="/app/prescriptions">View all</s-link>
-          </div>
-          {data.prescriptions.map((rx) => (
-            <PrescriptionRow
-              key={rx.id}
-              severity={rx.severity}
-              title={rx.title}
-              fixableByAI={rx.fixableByAI}
-              onView={() => {}}
-              onFix={() => {}}
-            />
-          ))}
-        </s-box>
-      </s-section>
-
-      {/* Footer help */}
-      <div
-        style={{
-          textAlign: "center",
-          fontSize: 13,
-          color: "#6D7175",
-          paddingTop: 24,
-        }}
-      >
-        Need help? <s-link href="#">Read the docs</s-link> or email{" "}
-        <s-link href="mailto:support@storerx.app">support@storerx.app</s-link>
+      {/* Quick Links */}
+      <div style={{
+        display: "flex",
+        gap: 16,
+        marginTop: 24,
+        paddingTop: 24,
+        borderTop: "1px solid #E5E7EB",
+      }}>
+        <Link to="/app/history" style={{ fontSize: 13, color: "#2563EB", textDecoration: "none" }}>
+          View fix history ({data.fixCount})
+        </Link>
+        <Link to="/app/settings" style={{ fontSize: 13, color: "#2563EB", textDecoration: "none" }}>
+          Settings
+        </Link>
       </div>
     </s-page>
   );
