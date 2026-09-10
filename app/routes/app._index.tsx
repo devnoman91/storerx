@@ -1,57 +1,98 @@
-import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
-import { useLoaderData } from "react-router";
+import type { LoaderFunctionArgs, HeadersFunction, ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { getScoreBand } from "../scoring";
+import prisma from "../db.server";
+import { collectAdminData } from "../collectors/admin";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const shopDomain = session.shop;
 
-  // TODO: Fetch real data from database
-  // For now, return mock data matching the design
-  return {
-    // Store health scores
-    overallScore: 74,
-    scores: {
-      conversion: 71,
-      ux: 82,
-      performance: 76,
-      seo: 84,
-      productPages: 63,
+  // Get or create shop record
+  let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
+  if (!shop) {
+    shop = await prisma.shop.create({
+      data: { domain: shopDomain },
+    });
+  }
+
+  // Get latest audit
+  const latestAudit = await prisma.audit.findFirst({
+    where: { shopId: shop.id, status: "completed" },
+    orderBy: { completedAt: "desc" },
+    include: {
+      findings: {
+        where: { status: "open" },
+        orderBy: { severity: "asc" },
+        take: 5,
+      },
     },
-    // Trend
+  });
+
+  // Get fix count this month
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  const fixCount = await prisma.fix.count({
+    where: {
+      shopId: shop.id,
+      status: "applied",
+      appliedAt: { gte: monthStart },
+    },
+  });
+
+  // Calculate days since last audit
+  const lastAuditDays = latestAudit?.completedAt
+    ? Math.floor((Date.now() - latestAudit.completedAt.getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+
+  // Count open findings
+  const openFindings = await prisma.finding.count({
+    where: {
+      audit: { shopId: shop.id },
+      status: "open",
+    },
+  });
+
+  const highPriorityCount = await prisma.finding.count({
+    where: {
+      audit: { shopId: shop.id },
+      status: "open",
+      severity: "high",
+    },
+  });
+
+  // Map findings to prescriptions
+  const prescriptions = (latestAudit?.findings || []).map((f) => ({
+    id: f.id,
+    severity: f.severity as "high" | "medium" | "low",
+    title: f.title,
+    fixableByAI: f.fixableByAI,
+  }));
+
+  return {
+    shopDomain,
+    hasAudit: !!latestAudit,
+    overallScore: latestAudit?.overallScore ?? 0,
+    scores: {
+      conversion: latestAudit?.conversionScore ?? 0,
+      ux: latestAudit?.uxScore ?? 0,
+      performance: latestAudit?.performanceScore ?? 0,
+      seo: latestAudit?.seoScore ?? 0,
+      productPages: latestAudit?.productPagesScore ?? 0,
+    },
     trendDirection: "up" as const,
-    trendPoints: 6,
+    trendPoints: 0,
     trendPeriod: "last month",
-    // Stats
-    prescriptionsOpen: 8,
-    fixesApplied: 12,
+    prescriptionsOpen: openFindings,
+    fixesApplied: fixCount,
     fixesPeriod: "this month",
-    lastAuditDays: 2,
-    // High priority issues
-    highPriorityCount: 3,
-    // Top prescriptions
-    prescriptions: [
-      {
-        id: "1",
-        severity: "high" as const,
-        title: "Product pages lack reviews above the fold",
-        fixableByAI: false,
-      },
-      {
-        id: "2",
-        severity: "medium" as const,
-        title: "Mobile add-to-cart button is below the fold",
-        fixableByAI: false,
-      },
-      {
-        id: "3",
-        severity: "medium" as const,
-        title: "42 images are missing alt text",
-        fixableByAI: true,
-      },
-    ],
-    // Audit state
+    lastAuditDays,
+    highPriorityCount,
+    prescriptions,
     isAuditing: false,
     auditProgress: null as null | {
       step: string;
@@ -60,6 +101,142 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       percent: number;
     },
   };
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const shopDomain = session.shop;
+
+  // Get shop record
+  let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
+  if (!shop) {
+    shop = await prisma.shop.create({ data: { domain: shopDomain } });
+  }
+
+  // Collect shop data from Shopify API
+  const shopData = await collectAdminData(admin);
+
+  // Create audit record
+  const audit = await prisma.audit.create({
+    data: {
+      shopId: shop.id,
+      status: "running",
+      startedAt: new Date(),
+    },
+  });
+
+  // Import rules and run audit
+  const { runRulesWithSummary } = await import("../rules");
+  const { collectStorefrontPage, buildAuditPageList } = await import("../collectors/storefront");
+  const { runLighthouseAudit } = await import("../collectors/lighthouse");
+  const { calculateScore, calculateStoreHealth } = await import("../scoring");
+
+  const allFindings: Array<{
+    ruleId: string;
+    pageType: string;
+    severity: string;
+    title: string;
+    evidenceType?: string;
+    evidenceValue?: string;
+    fixableByAI: boolean;
+    fixType?: string;
+    targetId?: string;
+  }> = [];
+
+  try {
+    // Build page list
+    const pages = buildAuditPageList(
+      shopDomain,
+      shopData.collections.map((c) => ({ handle: c.handle })),
+      shopData.products.map((p) => ({ handle: p.handle }))
+    );
+
+    // Scan homepage
+    const homepage = await collectStorefrontPage(`https://${shopDomain}`, "homepage", { domain: shopDomain });
+    const homepageRules = runRulesWithSummary("homepage", { html: homepage.html, shopData });
+    allFindings.push(...homepageRules.findings.map((f) => ({
+      ruleId: f.ruleId,
+      pageType: "homepage",
+      severity: f.severity,
+      title: f.title,
+      evidenceType: f.evidence?.type,
+      evidenceValue: f.evidence?.value,
+      fixableByAI: f.fixableByAI,
+      fixType: f.fixType,
+      targetId: f.targetId,
+    })));
+
+    // Scan products
+    for (const page of pages.filter((p) => p.type === "product").slice(0, 3)) {
+      const prodPage = await collectStorefrontPage(page.url, "product", { domain: shopDomain });
+      const prodRules = runRulesWithSummary("product", { html: prodPage.html, shopData });
+      allFindings.push(...prodRules.findings.map((f) => ({
+        ruleId: f.ruleId,
+        pageType: "product",
+        severity: f.severity,
+        title: f.title,
+        evidenceType: f.evidence?.type,
+        evidenceValue: f.evidence?.value,
+        fixableByAI: f.fixableByAI,
+        fixType: f.fixType,
+        targetId: f.targetId,
+      })));
+    }
+
+    // Run performance audit on homepage
+    const perfResult = await runLighthouseAudit({ url: `https://${shopDomain}` });
+
+    // Calculate scores
+    const storeHealth = calculateStoreHealth(allFindings as any);
+
+    // Update audit with results
+    await prisma.audit.update({
+      where: { id: audit.id },
+      data: {
+        status: "completed",
+        completedAt: new Date(),
+        overallScore: storeHealth.overall,
+        conversionScore: storeHealth.categories.find((c) => c.category === "conversion")?.score ?? 0,
+        uxScore: storeHealth.categories.find((c) => c.category === "ux")?.score ?? 0,
+        performanceScore: perfResult.combinedScore,
+        seoScore: storeHealth.categories.find((c) => c.category === "seo")?.score ?? 0,
+        productPagesScore: storeHealth.categories.find((c) => c.category === "productPages")?.score ?? 0,
+        totalIssues: allFindings.length,
+        highCount: allFindings.filter((f) => f.severity === "high").length,
+        mediumCount: allFindings.filter((f) => f.severity === "medium").length,
+        lowCount: allFindings.filter((f) => f.severity === "low").length,
+      },
+    });
+
+    // Create findings
+    for (const f of allFindings) {
+      await prisma.finding.create({
+        data: {
+          auditId: audit.id,
+          ruleId: f.ruleId,
+          pageType: f.pageType,
+          severity: f.severity,
+          title: f.title,
+          evidenceType: f.evidenceType,
+          evidenceValue: f.evidenceValue,
+          fixableByAI: f.fixableByAI,
+          fixType: f.fixType,
+          targetId: f.targetId,
+        },
+      });
+    }
+
+    return { success: true, auditId: audit.id };
+  } catch (error) {
+    await prisma.audit.update({
+      where: { id: audit.id },
+      data: {
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+    });
+    return { success: false, error: String(error) };
+  }
 };
 
 function ScoreRing({ score }: { score: number }) {
@@ -199,10 +376,16 @@ function PrescriptionRow({
 
 export default function Overview() {
   const data = useLoaderData<typeof loader>();
+  const fetcher = useFetcher();
+  const isAuditing = fetcher.state !== "idle";
 
   return (
     <s-page heading="Overview">
-      <s-button slot="primary-action">Run audit</s-button>
+      <fetcher.Form method="post">
+        <s-button slot="primary-action" type="submit" disabled={isAuditing}>
+          {isAuditing ? "Running audit..." : "Run audit"}
+        </s-button>
+      </fetcher.Form>
 
       {/* Critical issues banner */}
       {data.highPriorityCount > 0 && (
@@ -248,25 +431,6 @@ export default function Overview() {
               }}
             >
               <ScoreRing score={data.overallScore} />
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 12,
-                  color: "#6D7175",
-                }}
-              >
-                <svg width="64" height="20" viewBox="0 0 64 20">
-                  <polyline
-                    points="0,16 12,14 24,15 36,10 48,9 64,4"
-                    fill="none"
-                    stroke="#0C5132"
-                    strokeWidth="2"
-                  />
-                </svg>
-                Up {data.trendPoints} points since {data.trendPeriod}
-              </div>
             </div>
 
             {/* Category scores */}
@@ -302,8 +466,8 @@ export default function Overview() {
         />
         <MetricCard
           label="Last audit"
-          value={data.lastAuditDays}
-          suffix="days ago"
+          value={data.lastAuditDays ?? "Never"}
+          suffix={data.lastAuditDays !== null ? "days ago" : ""}
         />
       </div>
 

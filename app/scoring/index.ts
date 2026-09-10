@@ -126,3 +126,12 @@ export function getScoreBand(score: number): "critical" | "warning" | "success" 
   if (score < 80) return "warning";
   return "success";
 }
+
+/**
+ * Simple score calculation from findings
+ * Returns 0-100 based on severity weights
+ */
+export function calculateScore(findings: Finding[]): number {
+  const penalty = findings.reduce((sum, f) => sum + SEVERITY_WEIGHTS[f.severity], 0);
+  return Math.max(0, Math.round(100 - Math.min(penalty, 100)));
+}

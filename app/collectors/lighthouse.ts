@@ -1,89 +1,151 @@
 /**
- * Lighthouse Collector
+ * Performance Collector (Lightweight)
  *
- * Runs Lighthouse audits on pages to collect:
- * - Performance score
- * - Core Web Vitals (LCP, CLS, INP, TBT)
- * - Resource weights (JS, CSS, images)
- * - Third-party script analysis
+ * Uses Google PageSpeed Insights API - no local browser needed.
+ * Free API, rate limited but sufficient for store audits.
  */
 
 import type { LighthouseMetrics, ThirdPartyScript } from "../rules/types";
 
-export interface LighthouseCollectorOptions {
-  /** URL to audit */
-  url: string;
-  /** Run mobile audit (default: true) */
-  mobile?: boolean;
-  /** Run desktop audit (default: true) */
-  desktop?: boolean;
+// PageSpeed Insights API (free, no key needed for basic use)
+const PSI_API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
+
+// Known app script patterns
+const APP_SCRIPT_MAP: Record<string, string> = {
+  "klaviyo.com": "Klaviyo",
+  "yotpo.com": "Yotpo",
+  "judgeme.com": "Judge.me",
+  "loox.io": "Loox",
+  "stamped.io": "Stamped",
+  "okendo.io": "Okendo",
+  "gorgias.io": "Gorgias",
+  "tidio.com": "Tidio",
+  "omnisend.com": "Omnisend",
+  "smile.io": "Smile.io",
+  "trustpilot.com": "Trustpilot",
+  "privy.com": "Privy",
+  "hotjar.com": "Hotjar",
+  "googletagmanager.com": "Google Tag Manager",
+  "google-analytics.com": "Google Analytics",
+  "facebook.net": "Meta Pixel",
+  "tiktok.com": "TikTok Pixel",
+};
+
+export function matchScriptToApp(scriptUrl: string): string | undefined {
+  for (const [pattern, name] of Object.entries(APP_SCRIPT_MAP)) {
+    if (scriptUrl.includes(pattern)) return name;
+  }
+  return undefined;
 }
 
 export interface LighthouseResult {
   mobile?: LighthouseMetrics;
   desktop?: LighthouseMetrics;
-  /** Combined score: mobile weighted 70%, desktop 30% */
   combinedScore: number;
+  screenshot?: string;
 }
 
 /**
- * Run Lighthouse audit on a URL
+ * Run PageSpeed Insights audit
  */
-export async function runLighthouseAudit(
-  options: LighthouseCollectorOptions
-): Promise<LighthouseResult> {
-  const { url, mobile = true, desktop = true } = options;
+async function runPSIAudit(
+  url: string,
+  strategy: "mobile" | "desktop"
+): Promise<LighthouseMetrics> {
+  const params = new URLSearchParams({
+    url,
+    strategy,
+    category: "performance",
+  });
 
-  // TODO: Implement actual Lighthouse audit
-  // - Use lighthouse Node module
-  // - Configure mobile/desktop settings
-  // - Extract metrics
-  // - Match scripts to known apps
+  const response = await fetch(`${PSI_API}?${params}`);
 
-  throw new Error(
-    "Lighthouse integration not yet implemented. " +
-    "Install lighthouse package."
-  );
-}
+  if (!response.ok) {
+    throw new Error(`PageSpeed API error: ${response.status}`);
+  }
 
-/**
- * Match script URLs to known Shopify apps
- */
-export function matchScriptToApp(scriptUrl: string): string | undefined {
-  // Common app script patterns
-  const appPatterns: Record<string, RegExp> = {
-    "Judge.me": /judge\.me/i,
-    "Klaviyo": /klaviyo/i,
-    "Loox": /loox/i,
-    "Yotpo": /yotpo/i,
-    "Smile.io": /smile\.io/i,
-    "ReConvert": /reconvert/i,
-    "Tidio": /tidio/i,
-    "Gorgias": /gorgias/i,
-    "Zendesk": /zendesk/i,
-    "Intercom": /intercom/i,
-    "Hotjar": /hotjar/i,
-    "Lucky Orange": /luckyorange/i,
-    "Google Analytics": /google-analytics|googletagmanager/i,
-    "Facebook Pixel": /facebook\.net|fbq/i,
-    "TikTok Pixel": /tiktok/i,
-    "Pinterest": /pinimg|pinterest/i,
-    "Shopify": /cdn\.shopify\.com/i,
-  };
+  const data = await response.json();
+  const lhr = data.lighthouseResult;
 
-  for (const [appName, pattern] of Object.entries(appPatterns)) {
-    if (pattern.test(scriptUrl)) {
-      return appName;
+  if (!lhr) {
+    throw new Error("No Lighthouse result in response");
+  }
+
+  const audits = lhr.audits || {};
+
+  // Extract third-party scripts
+  const thirdPartyScripts: ThirdPartyScript[] = [];
+  const bootupItems = audits["bootup-time"]?.details?.items || [];
+
+  for (const item of bootupItems) {
+    if (item.url && !item.url.includes(new URL(url).hostname)) {
+      thirdPartyScripts.push({
+        url: item.url,
+        size: Math.round(item.total || 0),
+        blocking: (item.scripting || 0) > 100,
+        appName: matchScriptToApp(item.url),
+      });
     }
   }
 
-  return undefined;
+  // Calculate weights
+  let totalJsWeight = 0;
+  let totalCssWeight = 0;
+  let totalImageWeight = 0;
+
+  const resourceItems = audits["resource-summary"]?.details?.items || [];
+  for (const item of resourceItems) {
+    if (item.resourceType === "script") totalJsWeight = item.transferSize || 0;
+    if (item.resourceType === "stylesheet") totalCssWeight = item.transferSize || 0;
+    if (item.resourceType === "image") totalImageWeight = item.transferSize || 0;
+  }
+
+  return {
+    performanceScore: Math.round((lhr.categories?.performance?.score || 0) * 100),
+    lcp: Math.round((audits["largest-contentful-paint"]?.numericValue || 0) / 1000 * 10) / 10,
+    cls: Math.round((audits["cumulative-layout-shift"]?.numericValue || 0) * 100) / 100,
+    inp: Math.round(audits["experimental-interaction-to-next-paint"]?.numericValue || 0),
+    tbt: Math.round(audits["total-blocking-time"]?.numericValue || 0),
+    totalJsWeight,
+    totalCssWeight,
+    totalImageWeight,
+    thirdPartyScripts,
+  };
 }
 
-/**
- * Calculate combined performance score
- * Mobile weighted 70%, desktop 30%
- */
+export async function runLighthouseAudit(options: {
+  url: string;
+  mobile?: boolean;
+  desktop?: boolean;
+}): Promise<LighthouseResult> {
+  const { url, mobile = true, desktop = false } = options;
+
+  let mobileMetrics: LighthouseMetrics | undefined;
+  let desktopMetrics: LighthouseMetrics | undefined;
+
+  try {
+    if (mobile) {
+      mobileMetrics = await runPSIAudit(url, "mobile");
+    }
+  } catch (error) {
+    console.error("Mobile PSI failed:", error);
+  }
+
+  try {
+    if (desktop) {
+      desktopMetrics = await runPSIAudit(url, "desktop");
+    }
+  } catch (error) {
+    console.error("Desktop PSI failed:", error);
+  }
+
+  return {
+    mobile: mobileMetrics,
+    desktop: desktopMetrics,
+    combinedScore: calculateCombinedScore(mobileMetrics, desktopMetrics),
+  };
+}
+
 export function calculateCombinedScore(
   mobile?: LighthouseMetrics,
   desktop?: LighthouseMetrics
@@ -94,4 +156,16 @@ export function calculateCombinedScore(
   if (mobile) return mobile.performanceScore;
   if (desktop) return desktop.performanceScore;
   return 0;
+}
+
+/**
+ * Quick mobile-only perf check
+ */
+export async function quickPerfCheck(url: string): Promise<LighthouseMetrics | null> {
+  try {
+    return await runPSIAudit(url, "mobile");
+  } catch (error) {
+    console.error("Quick perf check failed:", error);
+    return null;
+  }
 }
