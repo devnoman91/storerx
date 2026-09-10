@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
-import { useLoaderData, useFetcher, Link } from "react-router";
+import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
@@ -26,13 +26,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shopDomain = session.shop;
   const formData = await request.formData();
 
-  await prisma.shop.update({
+  const settings = {
+    brandVoice: (formData.get("brandVoice") as string) || null,
+    auditSchedule: (formData.get("auditSchedule") as string) || "weekly",
+    emailSummary: formData.get("emailSummary") === "on",
+  };
+
+  // Upsert: the loader creates the shop row, but a POST can arrive first.
+  await prisma.shop.upsert({
     where: { domain: shopDomain },
-    data: {
-      brandVoice: formData.get("brandVoice") as string || null,
-      auditSchedule: formData.get("auditSchedule") as string || "weekly",
-      emailSummary: formData.get("emailSummary") === "on",
-    },
+    update: settings,
+    create: { domain: shopDomain, ...settings },
   });
 
   return { success: true };
@@ -40,25 +44,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function Settings() {
   const data = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
+  const fetcher = useFetcher<typeof action>();
   const isSaving = fetcher.state !== "idle";
+  const navigate = useNavigate();
+  const justSaved = fetcher.state === "idle" && fetcher.data?.success === true;
 
   return (
     <s-page heading="Settings">
-      <Link to="/app" style={{ textDecoration: "none" }}>
-        <s-button slot="navigation" variant="tertiary">← Back</s-button>
-      </Link>
+      {/* Must be a direct child of s-page: `slot` only applies to host children. */}
+      <s-button slot="navigation" variant="tertiary" onClick={() => navigate("/app")}>
+        ← Back
+      </s-button>
+
+      {justSaved && <s-banner tone="success" heading="Settings saved" />}
 
       <fetcher.Form method="post">
         {/* Brand Voice */}
         <div style={{ marginBottom: 24 }}>
-          <label style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
+          <label htmlFor="brandVoice" style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
             Brand Voice (optional)
           </label>
           <p style={{ fontSize: 13, color: "#6B7280", margin: "0 0 8px 0" }}>
             Paste a sample of your writing style. AI will match this tone.
           </p>
           <textarea
+            id="brandVoice"
             name="brandVoice"
             defaultValue={data.brandVoice}
             placeholder="e.g., We're friendly and casual. We avoid jargon and speak directly to our customers..."
@@ -76,10 +86,11 @@ export default function Settings() {
 
         {/* Scan Schedule */}
         <div style={{ marginBottom: 24 }}>
-          <label style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
+          <label htmlFor="auditSchedule" style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
             Auto-scan Schedule
           </label>
           <select
+            id="auditSchedule"
             name="auditSchedule"
             defaultValue={data.auditSchedule}
             style={{

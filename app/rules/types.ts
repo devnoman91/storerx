@@ -32,20 +32,32 @@ export interface RuleContext {
 
 export interface LighthouseMetrics {
   performanceScore: number;
-  lcp: number; // Largest Contentful Paint (ms)
+  lcp: number; // Largest Contentful Paint (seconds)
   cls: number; // Cumulative Layout Shift
-  inp: number; // Interaction to Next Paint (ms)
+  /**
+   * Interaction to Next Paint (ms). Only available as CrUX field data, so it
+   * is undefined for stores with too little traffic — rules must treat
+   * undefined as "unknown", never as "good".
+   */
+  inp?: number;
   tbt: number; // Total Blocking Time (ms)
   totalJsWeight: number; // bytes
   totalCssWeight: number; // bytes
   totalImageWeight: number; // bytes
+  /** Number of render-blocking resources. */
+  renderBlockingCount: number;
+  /** Number of font files requested. */
+  fontCount: number;
   thirdPartyScripts: ThirdPartyScript[];
 }
 
 export interface ThirdPartyScript {
+  /** Script URL, or the entity name when Lighthouse groups by entity. */
   url: string;
-  size: number; // bytes
+  size: number; // transfer size in bytes
   blocking: boolean;
+  /** Main-thread blocking time in ms. */
+  blockingTimeMs: number;
   appName?: string; // Matched app name if known
 }
 

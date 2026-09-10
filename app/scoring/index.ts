@@ -5,7 +5,7 @@
  * Severity weights: high = 10, medium = 5, low = 2.
  */
 
-import type { Finding, Severity, PageType } from "../rules/types";
+import type { Finding, PageType } from "../rules/types";
 import { SEVERITY_WEIGHTS } from "../rules/types";
 
 export type ScoreCategory = "conversion" | "ux" | "performance" | "seo" | "productPages";
@@ -17,6 +17,12 @@ export interface CategoryScore {
   highCount: number;
   mediumCount: number;
   lowCount: number;
+  /**
+   * False when the category has no measurement behind it — e.g. Lighthouse
+   * failed. Unmeasured categories are excluded from `overall` rather than
+   * counted as zero, which would report a store as worse than observed.
+   */
+  measured: boolean;
 }
 
 export interface StoreHealthScore {
@@ -74,13 +80,30 @@ function calculateCategoryScore(findings: Finding[]): CategoryScore {
     highCount: counts.high,
     mediumCount: counts.medium,
     lowCount: counts.low,
+    measured: true,
   };
+}
+
+export interface StoreHealthOptions {
+  /**
+   * Measured Lighthouse score (mobile 70 / desktop 30). FEATURES.md §3 makes
+   * Lighthouse the source for the Performance category, so when it is supplied
+   * it replaces the findings-derived score — otherwise the overall score and
+   * the Performance score shown next to it would disagree.
+   *
+   * `null` means Lighthouse did not run (API error, rate limit). The category
+   * is then marked unmeasured and dropped from the weighted average.
+   */
+  performanceScore?: number | null;
 }
 
 /**
  * Calculate full store health score from all findings
  */
-export function calculateStoreHealth(findings: Finding[]): StoreHealthScore {
+export function calculateStoreHealth(
+  findings: Finding[],
+  options: StoreHealthOptions = {},
+): StoreHealthScore {
   // Group findings by category
   const byCategory: Record<ScoreCategory, Finding[]> = {
     conversion: [],
@@ -99,14 +122,28 @@ export function calculateStoreHealth(findings: Finding[]): StoreHealthScore {
   const categories: CategoryScore[] = Object.entries(byCategory).map(([cat, catFindings]) => {
     const score = calculateCategoryScore(catFindings);
     score.category = cat as ScoreCategory;
+    // Keep the finding counts, but take the score itself from Lighthouse.
+    if (score.category === "performance") {
+      if (typeof options.performanceScore === "number") {
+        score.score = Math.max(0, Math.min(100, Math.round(options.performanceScore)));
+      } else if (options.performanceScore === null) {
+        score.measured = false;
+        score.score = 0;
+      }
+    }
     return score;
   });
 
-  // Calculate weighted overall score
-  let overall = 0;
+  // Weighted average over measured categories only, renormalised so a missing
+  // measurement neither inflates nor deflates the result.
+  let weighted = 0;
+  let totalWeight = 0;
   for (const cat of categories) {
-    overall += cat.score * CATEGORY_WEIGHTS[cat.category];
+    if (!cat.measured) continue;
+    weighted += cat.score * CATEGORY_WEIGHTS[cat.category];
+    totalWeight += CATEGORY_WEIGHTS[cat.category];
   }
+  const overall = totalWeight > 0 ? weighted / totalWeight : 0;
 
   const highPriorityCount = findings.filter(f => f.severity === "high").length;
 

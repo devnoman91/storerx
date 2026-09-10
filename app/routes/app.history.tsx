@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
-import { useLoaderData, Link } from "react-router";
+import { useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
@@ -26,7 +26,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       target: f.targetTitle,
       status: f.status,
       date: f.appliedAt?.toLocaleDateString() || f.createdAt.toLocaleDateString(),
-      canUndo: f.status === "applied" && f.undoExpiresAt && f.undoExpiresAt > new Date(),
+      canUndo: Boolean(
+        f.status === "applied" && f.undoExpiresAt && f.undoExpiresAt > new Date(),
+      ),
     })),
   };
 };
@@ -47,12 +49,14 @@ const statusLabels: Record<string, { label: string; color: string }> = {
 
 export default function History() {
   const { fixes } = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
 
   return (
     <s-page heading="Fix History">
-      <Link to="/app" style={{ textDecoration: "none" }}>
-        <s-button slot="navigation" variant="tertiary">← Back</s-button>
-      </Link>
+      {/* Must be a direct child of s-page: `slot` only applies to host children. */}
+      <s-button slot="navigation" variant="tertiary" onClick={() => navigate("/app")}>
+        ← Back
+      </s-button>
 
       {fixes.length === 0 ? (
         <div style={{
@@ -66,7 +70,7 @@ export default function History() {
             No fixes yet
           </h2>
           <p style={{ fontSize: 14, color: "#6B7280", margin: 0 }}>
-            When you fix issues with AI, they'll appear here.
+            When you fix issues with AI, they&apos;ll appear here.
           </p>
         </div>
       ) : (

@@ -45,7 +45,9 @@ Shopify store
 - Cart
 - Checkout settings (read via Admin API, not crawled)
 
-Audits run as **background jobs** (BullMQ + Redis). UI shows progress: "Scanning product pages… 3/5". Typical duration 1–3 min.
+Audits run as **background jobs**. The `Audit` table is the queue: the worker claims `pending` rows with `SELECT ... FOR UPDATE SKIP LOCKED`, which is atomic, so multiple workers are safe and no external broker is needed. UI shows progress: "Scanning product pages… 3/5". Typical duration 1–3 min.
+
+> Why not BullMQ/Redis: audit volume is ~1 job per shop per week, and the job payload is already a row in Postgres. A broker would be a second datastore, a second bill, and — on per-command pricing — a standing charge for an idle worker's polling. Revisit if job volume or fan-out grows.
 
 ---
 
@@ -284,12 +286,12 @@ Usage caps on AI generations per plan to protect margins. 7-day trial on paid pl
 
 - **App:** Shopify Remix app template (Node 20, TypeScript), Polaris, App Bridge
 - **DB:** PostgreSQL (Prisma)
-- **Queue:** BullMQ + Redis
+- **Queue:** PostgreSQL (`Audit` table, `FOR UPDATE SKIP LOCKED`)
 - **Crawl:** Playwright (Chromium), Lighthouse (node module)
 - **Images:** sharp
 - **AI:** OpenAI SDK (structured outputs, vision)
 - **Storefront:** Theme App Extension (Liquid + minimal JS)
-- **Hosting:** Fly.io / Railway (app + worker + Redis + Postgres)
+- **Hosting:** Fly.io / Railway (app + worker + Postgres)
 
 ---
 

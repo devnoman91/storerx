@@ -9,7 +9,8 @@ import { collectionRules } from "./collection";
 import { productRules } from "./product";
 import { cartRules } from "./cart";
 import { checkoutRules } from "./checkout";
-import { imageRules, checkProductImages, checkDuplicateImages } from "./images";
+import { imageRules } from "./images";
+import { perfRules } from "./perf";
 
 // Export all rules
 export const allRules: Rule[] = [
@@ -19,6 +20,7 @@ export const allRules: Rule[] = [
   ...cartRules,
   ...checkoutRules,
   ...imageRules,
+  ...perfRules,
 ];
 
 // Get rules by page type
@@ -85,6 +87,7 @@ export { productRules } from "./product";
 export { cartRules } from "./cart";
 export { checkoutRules } from "./checkout";
 export { imageRules, checkProductImages, checkDuplicateImages } from "./images";
+export { perfRules } from "./perf";
 
 // Re-export types
 export * from "./types";
