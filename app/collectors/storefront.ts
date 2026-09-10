@@ -1,66 +1,72 @@
 /**
- * Storefront Collector (Playwright)
+ * Storefront Collector (Lightweight)
  *
- * Crawls storefront pages to collect:
- * - HTML content
- * - Mobile + desktop screenshots
- * - DOM structure for rule checks
+ * Uses fetch to get page HTML - no browser needed.
+ * Screenshots handled separately via PageSpeed Insights API if needed.
  */
 
 export interface StorefrontPage {
   url: string;
+  pageType: "homepage" | "collection" | "product" | "cart";
   html: string;
-  mobileScreenshot: string; // File path
-  desktopScreenshot: string; // File path
+  fetchedAt: Date;
 }
 
 export interface StorefrontCollectorOptions {
-  /** Store domain (without protocol) */
   domain: string;
-  /** Storefront access token for password-protected stores */
   storefrontPassword?: string;
-  /** Output directory for screenshots */
-  screenshotDir: string;
 }
 
 /**
- * Collect page data via Playwright
+ * Fetch page HTML using native fetch
  */
 export async function collectStorefrontPage(
   url: string,
+  pageType: StorefrontPage["pageType"],
   options: StorefrontCollectorOptions
 ): Promise<StorefrontPage> {
-  // TODO: Implement Playwright page collection
-  // - Navigate to URL
-  // - Wait for load
-  // - Capture mobile screenshot (390px viewport)
-  // - Capture desktop screenshot (1440px viewport)
-  // - Get HTML content
+  const headers: Record<string, string> = {
+    "User-Agent": "Mozilla/5.0 (compatible; StoreRx/1.0; +https://storerx.app)",
+    "Accept": "text/html,application/xhtml+xml",
+  };
 
-  throw new Error(
-    "Playwright integration not yet implemented. " +
-    "Install playwright and configure browser."
-  );
+  // Handle password-protected stores
+  if (options.storefrontPassword) {
+    // Shopify uses a cookie after password submission
+    // For now, we'll skip password-protected stores in MVP
+  }
+
+  const response = await fetch(url, {
+    headers,
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: ${response.status}`);
+  }
+
+  const html = await response.text();
+
+  return {
+    url,
+    pageType,
+    html,
+    fetchedAt: new Date(),
+  };
 }
 
 /**
  * Collect all audit pages for a store
- *
- * Pages sampled:
- * - Homepage
- * - 3 collections (largest by product count)
- * - 5 products (top sellers)
- * - Cart
  */
 export async function collectAuditPages(
   options: StorefrontCollectorOptions,
-  pages: { type: string; url: string }[]
+  pages: Array<{ type: StorefrontPage["pageType"]; url: string }>
 ): Promise<StorefrontPage[]> {
   const results: StorefrontPage[] = [];
 
   for (const page of pages) {
     try {
-      const pageData = await collectStorefrontPage(page.url, options);
+      const pageData = await collectStorefrontPage(page.url, page.type, options);
       results.push(pageData);
     } catch (error) {
       console.error(`Failed to collect ${page.url}:`, error);
@@ -68,4 +74,37 @@ export async function collectAuditPages(
   }
 
   return results;
+}
+
+/**
+ * Build audit page list from shop data
+ */
+export function buildAuditPageList(
+  domain: string,
+  collections: Array<{ handle: string }>,
+  products: Array<{ handle: string }>
+): Array<{ type: StorefrontPage["pageType"]; url: string }> {
+  const baseUrl = `https://${domain}`;
+
+  const pages: Array<{ type: StorefrontPage["pageType"]; url: string }> = [
+    { type: "homepage", url: baseUrl },
+    { type: "cart", url: `${baseUrl}/cart` },
+  ];
+
+  // Add top 3 collections
+  for (const coll of collections.slice(0, 3)) {
+    pages.push({ type: "collection", url: `${baseUrl}/collections/${coll.handle}` });
+  }
+
+  // Add top 5 products
+  for (const prod of products.slice(0, 5)) {
+    pages.push({ type: "product", url: `${baseUrl}/products/${prod.handle}` });
+  }
+
+  return pages;
+}
+
+// No browser cleanup needed
+export async function closeBrowser(): Promise<void> {
+  // No-op for fetch-based collector
 }

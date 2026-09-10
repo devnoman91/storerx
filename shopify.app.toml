@@ -2,12 +2,11 @@
 
 client_id = "5cf5c5da943e862cca6f2d343ecf0a53"
 name = "storerx"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://storerx.fly.dev"
 embedded = true
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = ""
+scopes = "read_products,write_products,read_content,write_content,read_themes"
 
 [webhooks]
 api_version = "2026-10"
@@ -21,8 +20,7 @@ api_version = "2026-10"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+redirect_urls = [ "https://storerx.fly.dev/auth/callback" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true
