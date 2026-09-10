@@ -38,9 +38,5 @@ For each finding:
 
 Be helpful and specific, not alarmist. Focus on impact and solutions.`;
 
-  return generate(prompt, ExplanationSchema, {
-    model: "gpt-4.1-mini",
-    schemaName: "ExplanationSchema",
-    mockContext: { findings: findings.map(f => ({ ruleId: f.ruleId, title: f.title })) },
-  });
+  return generate(prompt, ExplanationSchema, { model: "gpt-4.1-mini" });
 }

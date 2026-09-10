@@ -40,9 +40,5 @@ Requirements:
 - Include brand name if space allows
 - Do NOT stuff keywords unnaturally`;
 
-  return generate(prompt, SeoSchema, {
-    model: "gpt-4.1-mini",
-    schemaName: "SeoSchema",
-    mockContext: { productTitle: context.productTitle, storeName: context.storeName },
-  });
+  return generate(prompt, SeoSchema, { model: "gpt-4.1-mini" });
 }

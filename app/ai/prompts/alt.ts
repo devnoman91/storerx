@@ -31,7 +31,5 @@ Requirements:
   return generate(prompt, AltTextSchema, {
     model: "gpt-4.1-mini",
     images: [imageBase64],
-    schemaName: "AltTextSchema",
-    mockContext: { productTitle },
   });
 }
