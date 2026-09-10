@@ -40,179 +40,188 @@ model Session {
 
 // Shop settings and configuration
 model Shop {
-  id              String   @id @default(cuid())
-  domain          String   @unique
-  name            String?
+  id     String  @id @default(cuid())
+  domain String  @unique
+  name   String?
 
   // Brand voice sample for AI generation
-  brandVoice      String?
+  brandVoice String?
 
   // Audit settings
-  auditSchedule   String   @default("weekly") // weekly, monthly, manual
-  emailSummary    Boolean  @default(true)
-  excludedPaths   String?  // JSON array of paths to skip
+  auditSchedule String  @default("weekly") // weekly, monthly, manual
+  emailSummary  Boolean @default(true)
+  excludedPaths String? // JSON array of paths to skip
 
   // Plan and billing
-  plan            String   @default("free") // free, starter, growth, pro
-  aiGenerationsUsed Int    @default(0)
-  aiGenerationsLimit Int   @default(5) // Based on plan
-  billingCycleStart DateTime?
+  plan               String    @default("free") // free, starter, growth, pro
+  aiGenerationsUsed  Int       @default(0)
+  aiGenerationsLimit Int       @default(5) // Based on plan
+  billingCycleStart  DateTime?
 
   // Timestamps
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  audits          Audit[]
-  fixes           Fix[]
-  aiUsage         AiUsage[]
+  audits  Audit[]
+  fixes   Fix[]
+  aiUsage AiUsage[]
 }
 
 // Audit run
 model Audit {
-  id              String   @id @default(cuid())
-  shopId          String
-  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
-  // Status
-  status          String   @default("pending") // pending, running, completed, failed
-  progress        Int      @default(0) // 0-100
-  currentStep     String?
+  // Status. This table is the job queue: workers claim `pending` rows with
+  // SELECT ... FOR UPDATE SKIP LOCKED, so no external broker is needed.
+  status      String  @default("pending") // pending, running, completed, failed
+  progress    Int     @default(0) // 0-100
+  currentStep String?
+  /**
+   * Claim count, so a repeatedly-crashing audit stops instead of looping.
+   */
+  attempts    Int     @default(0)
 
   // Overall scores (0-100)
-  overallScore    Int?
-  conversionScore Int?
-  uxScore         Int?
-  performanceScore Int?
-  seoScore        Int?
+  overallScore      Int?
+  conversionScore   Int?
+  uxScore           Int?
+  performanceScore  Int?
+  seoScore          Int?
   productPagesScore Int?
 
   // Counts
-  totalIssues     Int      @default(0)
-  highCount       Int      @default(0)
-  mediumCount     Int      @default(0)
-  lowCount        Int      @default(0)
+  totalIssues Int @default(0)
+  highCount   Int @default(0)
+  mediumCount Int @default(0)
+  lowCount    Int @default(0)
 
   // Error info if failed
-  error           String?
+  error String?
 
   // Timestamps
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
 
   // Relations
-  findings        Finding[]
-  pageScores      PageScore[]
+  findings   Finding[]
+  pageScores PageScore[]
+
+  // Supports the worker's claim query and the dashboard's latest-audit lookups.
+  @@index([status, createdAt])
+  @@index([shopId, status])
 }
 
 // Individual finding (issue detected by rule engine)
 model Finding {
-  id              String   @id @default(cuid())
-  auditId         String
-  audit           Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  auditId String
+  audit   Audit  @relation(fields: [auditId], references: [id], onDelete: Cascade)
 
   // Rule identification
-  ruleId          String   // e.g., prod.reviews.fold
-  pageType        String   // homepage, collection, product, cart, checkout, images, perf
-  severity        String   // high, medium, low
+  ruleId   String // e.g., prod.reviews.fold
+  pageType String // homepage, collection, product, cart, checkout, images, perf
+  severity String // high, medium, low
 
   // Display
-  title           String
-  explanation     String?  // AI-generated explanation
+  title       String
+  explanation String? // AI-generated explanation
 
   // Evidence
-  evidenceType    String?  // selector, text, screenshot
-  evidenceValue   String?
+  evidenceType  String? // selector, text, screenshot
+  evidenceValue String?
 
   // Fix info
-  fixableByAI     Boolean  @default(false)
-  fixType         String?  // product_description, alt_text, etc.
-  targetId        String?  // Resource ID (product, image, etc.)
-  targetTitle     String?
+  fixableByAI Boolean @default(false)
+  fixType     String? // product_description, alt_text, etc.
+  targetId    String? // Resource ID (product, image, etc.)
+  targetTitle String?
 
   // Status
-  status          String   @default("open") // open, fixed, dismissed
+  status String @default("open") // open, fixed, dismissed
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 // Per-page scores from audit
 model PageScore {
-  id              String   @id @default(cuid())
-  auditId         String
-  audit           Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  auditId String
+  audit   Audit  @relation(fields: [auditId], references: [id], onDelete: Cascade)
 
   // Page identification
-  pageType        String   // homepage, collection, product, cart
-  pageUrl         String
-  pageTitle       String?
-  resourceId      String?  // Shopify resource ID if applicable
+  pageType   String // homepage, collection, product, cart
+  pageUrl    String
+  pageTitle  String?
+  resourceId String? // Shopify resource ID if applicable
 
   // Scores
-  croScore        Int?
-  perfScore       Int?
-  issueCount      Int      @default(0)
+  croScore   Int?
+  perfScore  Int?
+  issueCount Int  @default(0)
 
   // Performance metrics
-  lcp             Float?   // Largest Contentful Paint (seconds)
-  cls             Float?   // Cumulative Layout Shift
-  inp             Float?   // Interaction to Next Paint (ms)
+  lcp Float? // Largest Contentful Paint (seconds)
+  cls Float? // Cumulative Layout Shift
+  inp Float? // Interaction to Next Paint (ms)
 
   // Screenshot paths (stored for 30 days)
-  mobileScreenshot String?
+  mobileScreenshot  String?
   desktopScreenshot String?
 
-  lastScannedAt   DateTime @default(now())
+  lastScannedAt DateTime @default(now())
 }
 
 // AI fix (preview → apply → undo)
 model Fix {
-  id              String   @id @default(cuid())
-  shopId          String
-  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
   // Fix type and target
-  type            String   // product_description, seo_title, alt_text, etc.
-  targetId        String   // Resource ID
-  targetTitle     String
+  type        String // product_description, seo_title, alt_text, etc.
+  targetId    String // Resource ID
+  targetTitle String
 
   // Content
-  before          String   // Original value
-  after           String   // New value (editable in preview)
+  before String // Original value
+  after  String // New value (editable in preview)
 
   // Status
-  status          String   @default("preview") // preview, applied, undone
+  status String @default("preview") // preview, applied, undone
 
   // Generation tracking
-  generationCount Int      @default(1)
+  generationCount Int @default(1)
 
   // Timestamps
-  createdAt       DateTime @default(now())
-  appliedAt       DateTime?
-  undoneAt        DateTime?
+  createdAt DateTime  @default(now())
+  appliedAt DateTime?
+  undoneAt  DateTime?
 
   // Undo expires 30 days after apply
-  undoExpiresAt   DateTime?
+  undoExpiresAt DateTime?
 }
 
 // AI usage tracking for cost management
 model AiUsage {
-  id              String   @id @default(cuid())
-  shopId          String
-  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
   // Task info
-  task            String   // explain, description, alt_text, etc.
-  model           String   // gpt-4.1, gpt-4.1-mini
+  task  String // explain, description, alt_text, etc.
+  model String // gpt-4.1, gpt-4.1-mini
 
   // Token usage
-  promptTokens    Int
+  promptTokens     Int
   completionTokens Int
-  totalTokens     Int
+  totalTokens      Int
 
   // Cost estimate (in cents)
-  estimatedCost   Float?
+  estimatedCost Float?
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 }

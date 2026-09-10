@@ -12,17 +12,14 @@
  * - Checkout settings (Admin API, not crawled)
  */
 
-import { runRulesWithSummary, type Finding, type PageType } from "../app/rules";
+import { runRulesWithSummary, type Finding, type PageType, type ShopData } from "../app/rules";
 import { calculateScore, calculateStoreHealth } from "../app/scoring";
 import { collectStorefrontPage, buildAuditPageList, closeBrowser } from "../app/collectors/storefront";
 import { runLighthouseAudit } from "../app/collectors/lighthouse";
-import { explainFindings } from "../app/ai/prompts";
-import { join } from "path";
 
 export interface AuditJobData {
   shopDomain: string;
   auditId: string;
-  accessToken: string;
 }
 
 export interface AuditJobResult {
@@ -33,7 +30,8 @@ export interface AuditJobResult {
     overall: number;
     conversion: number;
     ux: number;
-    performance: number;
+    /** null when Lighthouse did not run. */
+    performance: number | null;
     seo: number;
     productPages: number;
   };
@@ -41,7 +39,8 @@ export interface AuditJobResult {
     url: string;
     pageType: PageType;
     croScore: number;
-    perfScore: number;
+    /** null when Lighthouse did not run for this page. */
+    perfScore: number | null;
     findings: Finding[];
   }>;
   completedAt: Date;
@@ -66,13 +65,7 @@ const AUDIT_STEPS = [
 
 export async function processAuditJob(
   data: AuditJobData,
-  shopData: {
-    domain: string;
-    products: Array<{ handle: string }>;
-    collections: Array<{ handle: string }>;
-    checkoutSettings: any;
-    installedApps?: string[];
-  },
+  shopData: ShopData,
   onProgress?: (progress: AuditProgress) => void
 ): Promise<AuditJobResult> {
   const { shopDomain, auditId } = data;
@@ -100,11 +93,6 @@ export async function processAuditJob(
       shopData.products
     );
 
-    // Normalize shopData for rule context (cast to any since we only need partial data)
-    const normalizedShopData = {
-      ...shopData,
-      installedApps: shopData.installedApps || [],
-    };
 
     // Step 2: Scan homepage
     updateProgress(1);
@@ -115,7 +103,7 @@ export async function processAuditJob(
 
     const homepageRules = runRulesWithSummary("homepage", {
       html: homepage.html,
-      shopData: normalizedShopData as any,
+      shopData,
     });
 
     allFindings.push(...homepageRules.findings);
@@ -140,7 +128,7 @@ export async function processAuditJob(
 
       const collRules = runRulesWithSummary("collection", {
         html: collPage.html,
-        shopData: normalizedShopData as any,
+        shopData,
       });
 
       allFindings.push(...collRules.findings);
@@ -166,7 +154,7 @@ export async function processAuditJob(
 
       const prodRules = runRulesWithSummary("product", {
         html: prodPage.html,
-        shopData: normalizedShopData as any,
+        shopData,
       });
 
       allFindings.push(...prodRules.findings);
@@ -182,24 +170,62 @@ export async function processAuditJob(
     // Clean up browser
     await closeBrowser();
 
-    // Step 5: Run Lighthouse on homepage
+    // Step 5: Run Lighthouse on homepage.
+    // Both strategies, because the Performance score is weighted mobile 70 /
+    // desktop 30 (FEATURES.md §3). Two PSI calls — set PAGESPEED_API_KEY to
+    // avoid the unkeyed rate limit.
     updateProgress(4);
-    const lighthouseResult = await runLighthouseAudit({ url: homepageUrl });
+    const hasPsiKey = Boolean(process.env.PAGESPEED_API_KEY);
+    const lighthouseResult = await runLighthouseAudit({
+      url: homepageUrl,
+      mobile: true,
+      // Desktop doubles the PSI calls, which trips the unkeyed quota. Without
+      // a key the score is mobile-only rather than the §3 70/30 weighting.
+      desktop: hasPsiKey,
+    });
+    if (lighthouseResult.combinedScore === null) {
+      console.warn("[audit] Lighthouse unavailable — performance left unmeasured");
+    }
     const homepageIdx = pageResults.findIndex((p) => p.pageType === "homepage");
     if (homepageIdx >= 0) {
       pageResults[homepageIdx].perfScore = lighthouseResult.combinedScore;
+    }
+
+    // Performance findings come from the mobile run — that is what the score
+    // is weighted toward, and what most storefront traffic is.
+    if (lighthouseResult.mobile) {
+      updateProgress(4, "Analyzing performance");
+      const perfFindings = runRulesWithSummary("perf", {
+        html: "",
+        shopData,
+        lighthouse: lighthouseResult.mobile,
+      });
+      allFindings.push(...perfFindings.findings);
+      pageResults.push({
+        url: homepageUrl,
+        pageType: "perf",
+        croScore: 0,
+        perfScore: lighthouseResult.combinedScore,
+        findings: perfFindings.findings,
+      });
     }
 
     // Step 6: Check checkout settings + calculate final scores
     updateProgress(5);
     const checkoutRules = runRulesWithSummary("checkout", {
       html: "",
-      shopData: normalizedShopData as any,
+      shopData,
     });
     allFindings.push(...checkoutRules.findings);
 
-    // Calculate overall scores
-    const storeHealth = calculateStoreHealth(allFindings);
+    // Calculate overall scores. Performance comes from Lighthouse, not from
+    // the perf findings, so `overall` agrees with the score shown beside it.
+    const storeHealth = calculateStoreHealth(allFindings, {
+      performanceScore: lighthouseResult.combinedScore,
+    });
+    const performanceCategory = storeHealth.categories.find(
+      (c) => c.category === "performance",
+    );
 
     return {
       shopDomain,
@@ -209,7 +235,9 @@ export async function processAuditJob(
         overall: storeHealth.overall,
         conversion: storeHealth.categories.find((c) => c.category === "conversion")?.score || 0,
         ux: storeHealth.categories.find((c) => c.category === "ux")?.score || 0,
-        performance: lighthouseResult.combinedScore,
+        // Stays null when Lighthouse did not run, so the UI can say "not
+        // measured" instead of showing a 0 the store did not earn.
+        performance: performanceCategory?.measured ? performanceCategory.score : null,
         seo: storeHealth.categories.find((c) => c.category === "seo")?.score || 0,
         productPages: storeHealth.categories.find((c) => c.category === "productPages")?.score || 0,
       },

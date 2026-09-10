@@ -1,38 +1,56 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
-import { useLoaderData, useFetcher, Link } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, Link } from "react-router";
+import { useEffect, useRef } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
-import { collectAdminData } from "../collectors/admin";
+import { enqueueAudit, reapStaleAudits } from "../queue.server";
+
+const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
+type Severity = keyof typeof SEVERITY_RANK;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  // Get or create shop record
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) {
     shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
 
-  // Get latest audit
+  // An audit whose worker died would otherwise block new scans forever.
+  await reapStaleAudits(shop.id);
+
+  const runningAudit = await prisma.audit.findFirst({
+    where: { shopId: shop.id, status: { in: ["pending", "running"] } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, progress: true, currentStep: true },
+  });
+
   const latestAudit = await prisma.audit.findFirst({
     where: { shopId: shop.id, status: "completed" },
     orderBy: { completedAt: "desc" },
     include: {
       findings: {
         where: { status: "open" },
-        orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
+        // severity is a string column, so sort by rank in code below.
+        orderBy: { createdAt: "desc" },
       },
     },
   });
 
-  // Count by severity
-  const critical = latestAudit?.findings.filter(f => f.severity === "high") || [];
-  const improvements = latestAudit?.findings.filter(f => f.severity === "medium") || [];
-  const minor = latestAudit?.findings.filter(f => f.severity === "low") || [];
+  const failedAudit = runningAudit
+    ? null
+    : await prisma.audit.findFirst({
+        where: { shopId: shop.id, status: "failed" },
+        orderBy: { createdAt: "desc" },
+        select: { error: true, createdAt: true },
+      });
 
-  // Get fix count
+  const findings = (latestAudit?.findings ?? [])
+    .slice()
+    .sort((a, b) => SEVERITY_RANK[a.severity as Severity] - SEVERITY_RANK[b.severity as Severity]);
+
   const fixCount = await prisma.fix.count({
     where: { shopId: shop.id, status: "applied" },
   });
@@ -41,125 +59,37 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopDomain,
     hasAudit: !!latestAudit,
     lastAuditDate: latestAudit?.completedAt?.toLocaleDateString() || null,
-    critical,
-    improvements,
-    minor,
+    runningAudit,
+    failedError:
+      failedAudit && (!latestAudit || failedAudit.createdAt > latestAudit.createdAt)
+        ? failedAudit.error
+        : null,
+    critical: findings.filter((f) => f.severity === "high"),
+    improvements: findings.filter((f) => f.severity === "medium"),
+    minor: findings.filter((f) => f.severity === "low"),
     fixCount,
-    overallScore: latestAudit?.overallScore ?? 0,
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
+
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  if (intent !== "scan") {
+    return { ok: false, error: `Unsupported action: ${String(intent)}` };
+  }
 
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) {
     shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
 
-  // Collect shop data
-  const shopData = await collectAdminData(admin);
-
-  // Create audit
-  const audit = await prisma.audit.create({
-    data: { shopId: shop.id, status: "running", startedAt: new Date() },
-  });
-
-  try {
-    const { runRulesWithSummary } = await import("../rules");
-    const { collectStorefrontPage, buildAuditPageList } = await import("../collectors/storefront");
-    const { runLighthouseAudit } = await import("../collectors/lighthouse");
-    const { calculateStoreHealth } = await import("../scoring");
-
-    const allFindings: Array<{
-      ruleId: string;
-      pageType: string;
-      severity: string;
-      title: string;
-      fixableByAI: boolean;
-      fixType?: string;
-      targetId?: string;
-    }> = [];
-
-    // Build page list
-    const pages = buildAuditPageList(
-      shopDomain,
-      shopData.collections.map(c => ({ handle: c.handle })),
-      shopData.products.map(p => ({ handle: p.handle }))
-    );
-
-    // Scan homepage
-    const homepage = await collectStorefrontPage(`https://${shopDomain}`, "homepage", { domain: shopDomain });
-    const homepageRules = runRulesWithSummary("homepage", { html: homepage.html, shopData });
-    allFindings.push(...homepageRules.findings.map(f => ({
-      ruleId: f.ruleId,
-      pageType: "homepage",
-      severity: f.severity,
-      title: f.title,
-      fixableByAI: f.fixableByAI,
-      fixType: f.fixType,
-      targetId: f.targetId,
-    })));
-
-    // Scan products
-    for (const page of pages.filter(p => p.type === "product").slice(0, 3)) {
-      const prodPage = await collectStorefrontPage(page.url, "product", { domain: shopDomain });
-      const prodRules = runRulesWithSummary("product", { html: prodPage.html, shopData });
-      allFindings.push(...prodRules.findings.map(f => ({
-        ruleId: f.ruleId,
-        pageType: "product",
-        severity: f.severity,
-        title: f.title,
-        fixableByAI: f.fixableByAI,
-        fixType: f.fixType,
-        targetId: f.targetId,
-      })));
-    }
-
-    // Run performance audit
-    const perfResult = await runLighthouseAudit({ url: `https://${shopDomain}` });
-    const storeHealth = calculateStoreHealth(allFindings as any);
-
-    // Update audit
-    await prisma.audit.update({
-      where: { id: audit.id },
-      data: {
-        status: "completed",
-        completedAt: new Date(),
-        overallScore: storeHealth.overall,
-        performanceScore: perfResult.combinedScore,
-        totalIssues: allFindings.length,
-        highCount: allFindings.filter(f => f.severity === "high").length,
-        mediumCount: allFindings.filter(f => f.severity === "medium").length,
-        lowCount: allFindings.filter(f => f.severity === "low").length,
-      },
-    });
-
-    // Create findings
-    for (const f of allFindings) {
-      await prisma.finding.create({
-        data: {
-          auditId: audit.id,
-          ruleId: f.ruleId,
-          pageType: f.pageType,
-          severity: f.severity,
-          title: f.title,
-          fixableByAI: f.fixableByAI,
-          fixType: f.fixType,
-          targetId: f.targetId,
-        },
-      });
-    }
-
-    return { success: true };
-  } catch (error) {
-    await prisma.audit.update({
-      where: { id: audit.id },
-      data: { status: "failed", error: String(error) },
-    });
-    return { success: false, error: String(error) };
-  }
+  // Enqueueing is a single row insert, and it collapses a double-click into
+  // the scan that is already queued.
+  const { id, created } = await enqueueAudit(shop.id);
+  return { ok: true, auditId: id, alreadyRunning: !created };
 };
 
 function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"; count: number }) {
@@ -169,7 +99,7 @@ function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"
     success: { bg: "#D1FAE5", color: "#065F46", icon: "🟢" },
   };
   const { bg, color, icon } = styles[type];
-  const labels = { critical: "Critical", warning: "To Improve", success: "Passed" };
+  const labels = { critical: "Critical", warning: "To Improve", success: "Fixed all time" };
 
   return (
     <div style={{
@@ -189,18 +119,11 @@ function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"
   );
 }
 
-function IssueCard({
-  severity,
-  title,
-  fixable,
-  onFix,
-  onDismiss,
-}: {
-  severity: "high" | "medium" | "low";
+function IssueCard({ severity, title, explanation, fixable }: {
+  severity: Severity;
   title: string;
+  explanation: string | null;
   fixable: boolean;
-  onFix?: () => void;
-  onDismiss?: () => void;
 }) {
   const severityColors = {
     high: "#EF4444",
@@ -223,14 +146,51 @@ function IssueCard({
         background: severityColors[severity],
         flexShrink: 0,
       }} />
-      <span style={{ flex: 1, fontSize: 14 }}>{title}</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14 }}>{title}</div>
+        {explanation && (
+          <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{explanation}</div>
+        )}
+      </div>
       <div style={{ display: "flex", gap: 8 }}>
         {fixable ? (
-          <s-button variant="primary" onClick={onFix}>Fix with AI</s-button>
+          <s-button variant="primary">Fix with AI</s-button>
         ) : (
-          <s-button onClick={onFix}>How to Fix</s-button>
+          <s-button>View</s-button>
         )}
-        <s-button variant="tertiary" onClick={onDismiss}>Dismiss</s-button>
+      </div>
+    </div>
+  );
+}
+
+function IssueSection({ heading, color, issues }: {
+  heading: string;
+  color: string;
+  issues: Array<{
+    id: string;
+    severity: string;
+    title: string;
+    explanation: string | null;
+    fixableByAI: boolean;
+  }>;
+}) {
+  if (issues.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px 0", color }}>
+        {heading} ({issues.length})
+      </h2>
+      <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
+        {issues.map((issue) => (
+          <IssueCard
+            key={issue.id}
+            severity={issue.severity as Severity}
+            title={issue.title}
+            explanation={issue.explanation}
+            fixable={issue.fixableByAI}
+          />
+        ))}
       </div>
     </div>
   );
@@ -238,20 +198,74 @@ function IssueCard({
 
 export default function Dashboard() {
   const data = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
-  const isScanning = fetcher.state !== "idle";
+  const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
+
+  const isScanning = !!data.runningAudit;
+  const isSubmitting = fetcher.state !== "idle";
+  const scanDisabled = isScanning || isSubmitting;
 
   const totalIssues = data.critical.length + data.improvements.length + data.minor.length;
 
+  const startScan = () => fetcher.submit({ intent: "scan" }, { method: "post" });
+
+  // Poll while a scan is in flight so progress and results appear on their own.
+  // Held in a ref because `revalidator` gets a new identity on every state
+  // change, which would otherwise tear down and rebuild the interval each tick.
+  const revalidatorRef = useRef(revalidator);
+  useEffect(() => {
+    revalidatorRef.current = revalidator;
+  }, [revalidator]);
+
+  useEffect(() => {
+    if (!isScanning) return;
+    const id = setInterval(() => {
+      if (revalidatorRef.current.state === "idle") revalidatorRef.current.revalidate();
+    }, 3000);
+    return () => clearInterval(id);
+  }, [isScanning]);
+
   return (
     <s-page heading="Store Health">
-      <fetcher.Form method="post">
-        <s-button slot="primary-action" type="submit" disabled={isScanning}>
-          {isScanning ? "Scanning..." : "Scan Store"}
-        </s-button>
-      </fetcher.Form>
+      <s-button
+        slot="primary-action"
+        variant="primary"
+        disabled={scanDisabled}
+        onClick={startScan}
+      >
+        {scanDisabled ? "Scanning..." : "Scan Store"}
+      </s-button>
 
-      {/* Status Summary */}
+      {!isScanning && data.failedError && (
+        <s-banner tone="critical" heading="Last scan failed">
+          {data.failedError}
+        </s-banner>
+      )}
+
+      {isScanning && (
+        <div style={{
+          padding: 20,
+          background: "#EFF6FF",
+          borderRadius: 12,
+          marginBottom: 24,
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+            Scanning your store…
+          </div>
+          <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 12 }}>
+            {data.runningAudit?.currentStep || "Getting started"} · {data.runningAudit?.progress ?? 0}%
+          </div>
+          <div style={{ height: 6, background: "#DBEAFE", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{
+              width: `${data.runningAudit?.progress ?? 0}%`,
+              height: "100%",
+              background: "#2563EB",
+              transition: "width 300ms ease",
+            }} />
+          </div>
+        </div>
+      )}
+
       {data.hasAudit ? (
         <>
           <div style={{ marginBottom: 24 }}>
@@ -265,50 +279,10 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Critical Issues */}
-          {data.critical.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px 0", color: "#991B1B" }}>
-                Fix Now ({data.critical.length})
-              </h2>
-              <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
-                {data.critical.map((issue) => (
-                  <IssueCard
-                    key={issue.id}
-                    severity="high"
-                    title={issue.title}
-                    fixable={issue.fixableByAI}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          <IssueSection heading="Fix Now" color="#991B1B" issues={data.critical} />
+          <IssueSection heading="Improvements" color="#92400E" issues={data.improvements} />
+          <IssueSection heading="Minor" color="#374151" issues={data.minor} />
 
-          {/* Improvements */}
-          {data.improvements.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px 0", color: "#92400E" }}>
-                Improvements ({data.improvements.length})
-              </h2>
-              <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
-                {data.improvements.slice(0, 5).map((issue) => (
-                  <IssueCard
-                    key={issue.id}
-                    severity="medium"
-                    title={issue.title}
-                    fixable={issue.fixableByAI}
-                  />
-                ))}
-                {data.improvements.length > 5 && (
-                  <div style={{ padding: 16, textAlign: "center", color: "#6B7280", fontSize: 13 }}>
-                    +{data.improvements.length - 5} more improvements
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* No Issues */}
           {totalIssues === 0 && (
             <div style={{
               textAlign: "center",
@@ -327,29 +301,27 @@ export default function Dashboard() {
           )}
         </>
       ) : (
-        /* No Audit Yet */
-        <div style={{
-          textAlign: "center",
-          padding: 48,
-          background: "#F9FAFB",
-          borderRadius: 12,
-        }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
-          <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0" }}>
-            Ready to check your store?
-          </h2>
-          <p style={{ fontSize: 14, color: "#6B7280", margin: "0 0 16px 0" }}>
-            We'll scan your pages and find ways to improve conversions.
-          </p>
-          <fetcher.Form method="post">
-            <s-button variant="primary" type="submit" disabled={isScanning}>
-              {isScanning ? "Scanning..." : "Start First Scan"}
+        !isScanning && (
+          <div style={{
+            textAlign: "center",
+            padding: 48,
+            background: "#F9FAFB",
+            borderRadius: 12,
+          }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0" }}>
+              Ready to check your store?
+            </h2>
+            <p style={{ fontSize: 14, color: "#6B7280", margin: "0 0 16px 0" }}>
+              We&apos;ll scan your pages and find ways to improve conversions.
+            </p>
+            <s-button variant="primary" disabled={scanDisabled} onClick={startScan}>
+              Start First Scan
             </s-button>
-          </fetcher.Form>
-        </div>
+          </div>
+        )
       )}
 
-      {/* Quick Links */}
       <div style={{
         display: "flex",
         gap: 16,

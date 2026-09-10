@@ -1,0 +1,12 @@
+{
+  "performanceScore": 88,
+  "lcp": 2.1,
+  "cls": 0.05,
+  "tbt": 150,
+  "totalJsWeight": 300000,
+  "totalCssWeight": 70000,
+  "totalImageWeight": 900000,
+  "renderBlockingCount": 0,
+  "fontCount": 3,
+  "thirdPartyScripts": []
+}

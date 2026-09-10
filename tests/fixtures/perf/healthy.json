@@ -1,0 +1,15 @@
+{
+  "performanceScore": 94,
+  "lcp": 1.8,
+  "cls": 0.04,
+  "inp": 120,
+  "tbt": 90,
+  "totalJsWeight": 220000,
+  "totalCssWeight": 60000,
+  "totalImageWeight": 700000,
+  "renderBlockingCount": 0,
+  "fontCount": 2,
+  "thirdPartyScripts": [
+    { "url": "Google Analytics", "size": 40000, "blocking": false, "blockingTimeMs": 30, "appName": "Google Analytics" }
+  ]
+}

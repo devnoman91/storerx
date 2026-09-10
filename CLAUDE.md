@@ -12,13 +12,13 @@ AI Conversion Doctor for Shopify. Audits a store page-by-page (CRO + performance
 2. **AI never writes to the store without approval.** All fixes go through `Fix` (preview → approve → apply → undo). Keep the `before` snapshot.
 3. **No invented numbers.** Impact = High/Medium/Low. Never show "+X% conversion".
 4. **All LLM calls use Structured Outputs** via the single wrapper `app/ai/generate.ts`. No free-text parsing. No direct `openai` imports elsewhere.
-5. **No LLM/Lighthouse/Playwright inside request handlers.** Everything heavy runs in BullMQ workers (`worker/`).
+5. **No LLM/Lighthouse/Playwright inside request handlers.** Everything heavy runs in the worker (`worker/`). The job queue is the `Audit` table itself — workers claim `pending` rows with `FOR UPDATE SKIP LOCKED`. No external broker.
 6. **Storefront changes only via Theme App Extension** (`extensions/storerx-theme/`). Never modify merchant theme files.
 7. Do not recommend "convert images to WebP" — Shopify CDN handles it.
 
 ## Stack
 
-Shopify Remix app template · TypeScript · Polaris · Prisma/PostgreSQL · BullMQ/Redis · Playwright · Lighthouse · sharp · OpenAI SDK · Theme App Extension.
+Shopify Remix app template · TypeScript · Polaris · Prisma/PostgreSQL (also the job queue) · Playwright · Lighthouse · sharp · OpenAI SDK · Theme App Extension.
 
 ## Layout
 
@@ -32,7 +32,7 @@ app/
   ai/prompts/        one file per task (explain, description, faq, seo, alt, crosssell, imageQuality)
   collectors/        admin.ts (GraphQL), storefront.ts (Playwright), lighthouse.ts
   fixes/             apply/undo per fix type
-worker/              BullMQ processors: audit, imageScan, fix
+worker/              poll-loop processors: audit, imageScan, fix
 extensions/storerx-theme/   app blocks: faq, trust-badges, crosssells, shipping-bar
 prisma/schema.prisma
 docs/FEATURES.md
@@ -52,7 +52,7 @@ docs/FEATURES.md
 
 ```
 npm run dev            # shopify app dev
-npm run worker         # BullMQ workers
+npm run worker         # audit worker (polls the Audit table)
 npm test               # vitest (rules + scoring)
 npx prisma migrate dev
 ```

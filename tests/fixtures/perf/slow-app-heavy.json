@@ -1,0 +1,17 @@
+{
+  "performanceScore": 34,
+  "lcp": 5.2,
+  "cls": 0.31,
+  "inp": 620,
+  "tbt": 1400,
+  "totalJsWeight": 1600000,
+  "totalCssWeight": 180000,
+  "totalImageWeight": 2400000,
+  "renderBlockingCount": 4,
+  "fontCount": 6,
+  "thirdPartyScripts": [
+    { "url": "Klaviyo", "size": 410000, "blocking": true, "blockingTimeMs": 820, "appName": "Klaviyo" },
+    { "url": "Yotpo", "size": 260000, "blocking": true, "blockingTimeMs": 340, "appName": "Yotpo" },
+    { "url": "Google Tag Manager", "size": 90000, "blocking": false, "blockingTimeMs": 110, "appName": "Google Tag Manager" }
+  ]
+}
