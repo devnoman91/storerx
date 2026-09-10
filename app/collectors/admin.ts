@@ -17,9 +17,15 @@ interface AdminApiClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
 }
 
+// Admin's ProductSortKeys has no BEST_SELLING (that is a Storefront API key),
+// so this is FEATURES.md §2's stated fallback: newest first. True top-sellers
+// needs order data, which is a separate query.
+/** Collections fetched before picking the largest few. */
+const COLLECTION_SAMPLE_SIZE = 50;
+
 const PRODUCTS_QUERY = `
   query GetProducts($first: Int!) {
-    products(first: $first, sortKey: BEST_SELLING) {
+    products(first: $first, sortKey: CREATED_AT, reverse: true) {
       edges {
         node {
           id
@@ -60,9 +66,11 @@ const PRODUCTS_QUERY = `
   }
 `;
 
+// CollectionSortKeys has no PRODUCTS_COUNT, so "largest by product count"
+// (FEATURES.md §2) is done client-side over a wider page of collections.
 const COLLECTIONS_QUERY = `
   query GetCollections($first: Int!) {
-    collections(first: $first, sortKey: PRODUCTS_COUNT) {
+    collections(first: $first, sortKey: UPDATED_AT, reverse: true) {
       edges {
         node {
           id
@@ -98,7 +106,7 @@ export async function collectAdminData(admin: AdminApiClient): Promise<ShopData>
   const productsData = await productsResponse.json();
 
   const collectionsResponse = await admin.graphql(COLLECTIONS_QUERY, {
-    variables: { first: 5 },
+    variables: { first: COLLECTION_SAMPLE_SIZE },
   });
   const collectionsData = await collectionsResponse.json();
 
@@ -147,6 +155,9 @@ export async function collectAdminData(admin: AdminApiClient): Promise<ShopData>
       hasFilters: false,
     })
   );
+
+  // Largest first, so the audit samples the collections that matter most.
+  collections.sort((a, b) => b.productCount - a.productCount);
 
   const shop = shopData.data?.shop;
   const wallets = shop?.paymentSettings?.supportedDigitalWallets || [];
