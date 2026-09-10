@@ -44,9 +44,5 @@ Requirements:
 - Include a clear value proposition
 - No fluff or filler phrases`;
 
-  return generate(prompt, DescriptionSchema, {
-    model: "gpt-4.1",
-    schemaName: "DescriptionSchema",
-    mockContext: { productTitle: product.title },
-  });
+  return generate(prompt, DescriptionSchema, { model: "gpt-4.1" });
 }

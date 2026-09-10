@@ -4,17 +4,11 @@
  * All LLM calls go through this module.
  * Uses Structured Outputs (JSON schema) - never free-text parsing.
  * Never called inside HTTP request handlers - only in BullMQ workers.
- *
- * Mock mode: If OPENAI_API_KEY is not set, returns mock data for development/demo.
  */
 
 import { z } from "zod";
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
-import { getMockForSchema } from "./mock";
-
-// Check for mock mode
-export const USE_MOCK_AI = !process.env.OPENAI_API_KEY;
 
 // Initialize OpenAI client (lazy)
 let openaiClient: OpenAI | null = null;
@@ -35,8 +29,6 @@ export interface GenerateOptions {
   images?: string[]; // Base64 encoded images for vision
   maxTokens?: number;
   temperature?: number;
-  schemaName?: string; // For mock mode matching
-  mockContext?: Record<string, unknown>; // Context for mock data generation
 }
 
 export interface GenerateResult<T> {
@@ -61,19 +53,7 @@ export async function generate<T extends z.ZodType>(
     images,
     maxTokens = 2048,
     temperature = 0.7,
-    schemaName,
-    mockContext,
   } = options;
-
-  // Mock mode - return fake data for development/demo
-  if (USE_MOCK_AI) {
-    console.warn("[AI] Running in mock mode - set OPENAI_API_KEY for real AI");
-    const mockData = getMockForSchema(schemaName || "", mockContext);
-    return {
-      data: mockData as z.infer<T>,
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-    };
-  }
 
   const client = getClient();
 

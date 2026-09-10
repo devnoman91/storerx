@@ -43,9 +43,5 @@ Generate 5-8 relevant FAQ items covering:
 
 Keep answers concise (1-3 sentences). Be helpful and accurate.`;
 
-  return generate(prompt, FaqSchema, {
-    model: "gpt-4.1-mini",
-    schemaName: "FaqSchema",
-    mockContext: { productTitle: context.productTitle },
-  });
+  return generate(prompt, FaqSchema, { model: "gpt-4.1-mini" });
 }
