@@ -4,6 +4,7 @@
   "scripts": {
     "build": "react-router build",
     "dev": "shopify app dev",
+    "dev:app": "concurrently --kill-others --names web,worker --prefix-colors blue,magenta \"react-router dev\" \"npm run worker\"",
     "worker": "tsx watch --clear-screen=false --env-file-if-exists=.env worker/index.ts",
     "worker:start": "tsx --env-file-if-exists=.env worker/index.ts",
     "config:link": "shopify app config link",

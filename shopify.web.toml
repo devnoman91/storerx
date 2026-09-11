@@ -5,6 +5,7 @@ webhooks_path = "/webhooks/app/uninstalled"
 [commands]
 predev = "npx prisma generate"
 # The audit worker runs alongside the dev server so scans work with just
-# `shopify app dev`. It inherits the CLI-injected SHOPIFY_* env vars, and
-# --kill-others stops both together so no orphaned worker is left polling.
-dev = 'npx prisma migrate deploy && npx concurrently --kill-others --names web,worker --prefix-colors blue,magenta "npm exec react-router dev" "npm run worker"'
+# `shopify app dev`. The CLI does NOT use a shell here: it splits this line on
+# "&&" and then on single spaces, so no argument may contain a space or quotes.
+# The concurrently invocation lives in the dev:app npm script, which does.
+dev = "npx prisma migrate deploy && npm run dev:app"
