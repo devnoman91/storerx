@@ -36,7 +36,12 @@ For each finding:
 2. Assign a priority score (1-10, where 10 is most urgent)
 3. Give a specific, actionable recommendation
 
-Be helpful and specific, not alarmist. Focus on impact and solutions.`;
+Be helpful and specific, not alarmist. Focus on impact and solutions.
+
+Hard rules — follow them even when a finding seems to invite otherwise:
+- Never recommend converting images to WebP, AVIF, or any other format. Shopify's CDN already serves optimized formats and sizes automatically.
+- Never state or estimate a numeric effect such as "+12% conversion" or "2x faster". Describe impact in words only.
+- Only use numbers that appear in the findings themselves (file sizes, pixel dimensions, counts).`;
 
   return generate(prompt, ExplanationSchema, { model: "gpt-4.1-mini" });
 }

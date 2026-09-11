@@ -86,7 +86,7 @@ export { collectionRules } from "./collection";
 export { productRules } from "./product";
 export { cartRules } from "./cart";
 export { checkoutRules } from "./checkout";
-export { imageRules, checkProductImages, checkDuplicateImages } from "./images";
+export { imageRules, checkCatalogImages, checkProductImages, checkDuplicateImages } from "./images";
 export { perfRules } from "./perf";
 
 // Re-export types

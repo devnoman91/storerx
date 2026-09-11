@@ -140,6 +140,9 @@ model Finding {
   // (checkout, perf) that are not tied to one page.
   pageUrl String?
 
+  // CDN URL of the affected image, for thumbnails on image findings.
+  imageUrl String?
+
   // Evidence
   evidenceType  String? // selector, text, screenshot
   evidenceValue String?

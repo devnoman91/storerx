@@ -1,0 +1,51 @@
+[
+  {
+    "id": "gid://shopify/Product/1",
+    "title": "Purple Snowboard",
+    "handle": "purple-snowboard",
+    "url": "https://shop.myshopify.com/products/purple-snowboard",
+    "images": [
+      { "id": "gid://shopify/MediaImage/11", "url": "https://cdn.shopify.com/purple-1.png", "altText": "Top view of a purple snowboard", "width": 3097, "height": 3908, "fileSize": 1730337, "mimeType": "image/png" }
+    ]
+  },
+  {
+    "id": "gid://shopify/Product/2",
+    "title": "Healthy Hoodie",
+    "handle": "healthy-hoodie",
+    "url": "https://shop.myshopify.com/products/healthy-hoodie",
+    "images": [
+      { "id": "gid://shopify/MediaImage/21", "url": "https://cdn.shopify.com/hoodie-1.jpg", "altText": "Front of hoodie", "width": 1600, "height": 1600, "fileSize": 240000, "mimeType": "image/jpeg" },
+      { "id": "gid://shopify/MediaImage/22", "url": "https://cdn.shopify.com/hoodie-2.jpg", "altText": "Back of hoodie", "width": 1600, "height": 1600, "fileSize": 251000, "mimeType": "image/jpeg" },
+      { "id": "gid://shopify/MediaImage/23", "url": "https://cdn.shopify.com/hoodie-3.jpg", "altText": "Hood detail", "width": 1600, "height": 1600, "fileSize": 198000, "mimeType": "image/jpeg" }
+    ]
+  },
+  {
+    "id": "gid://shopify/Product/3",
+    "title": "Mixed Mug",
+    "handle": "mixed-mug",
+    "url": "https://shop.myshopify.com/products/mixed-mug",
+    "images": [
+      { "id": "gid://shopify/MediaImage/31", "url": "https://cdn.shopify.com/mug-1.jpg", "altText": "", "width": 1200, "height": 1200, "fileSize": 180000, "mimeType": "image/jpeg" },
+      { "id": "gid://shopify/MediaImage/32", "url": "https://cdn.shopify.com/mug-2.jpg", "width": 1200, "height": 1500, "fileSize": 190000, "mimeType": "image/jpeg" },
+      { "id": "gid://shopify/MediaImage/33", "url": "https://cdn.shopify.com/mug-3.jpg", "altText": "Mug handle", "width": 640, "height": 480, "fileSize": 60000, "mimeType": "image/jpeg" }
+    ]
+  },
+  {
+    "id": "gid://shopify/Product/4",
+    "title": "Hoodie Twin",
+    "handle": "hoodie-twin",
+    "url": "https://shop.myshopify.com/products/hoodie-twin",
+    "images": [
+      { "id": "gid://shopify/MediaImage/41", "url": "https://cdn.shopify.com/hoodie-1-copy.jpg", "altText": "Front of hoodie", "width": 1600, "height": 1600, "fileSize": 240000, "mimeType": "image/jpeg" },
+      { "id": "gid://shopify/MediaImage/21", "url": "https://cdn.shopify.com/hoodie-1.jpg", "altText": "Front of hoodie", "width": 1600, "height": 1600, "fileSize": 240000, "mimeType": "image/jpeg" },
+      { "id": "gid://shopify/MediaImage/42", "url": "https://cdn.shopify.com/zero.jpg", "altText": "Broken", "width": 900, "height": 0, "fileSize": 1000, "mimeType": "image/jpeg" }
+    ]
+  },
+  {
+    "id": "gid://shopify/Product/5",
+    "title": "Ghost Product",
+    "handle": "ghost-product",
+    "url": "https://shop.myshopify.com/products/ghost-product",
+    "images": []
+  }
+]

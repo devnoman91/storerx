@@ -5,9 +5,90 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
+import { isCatalogPage } from "../scoring";
+import {
+  IMAGE_MAX_DIMENSION,
+  IMAGE_MIN_DIMENSION,
+  IMAGE_SIZE_LIMIT_BYTES,
+  MIN_IMAGES_PER_PRODUCT,
+} from "../rules/images";
 
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
 type Severity = keyof typeof SEVERITY_RANK;
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** Prescription titles for catalog rules, which group many rows into one. */
+const CATALOG_TITLES: Record<string, (n: number) => string> = {
+  "img.alt": (n) => `${plural(n, "image is", "images are")} missing alt text`,
+  "img.size": (n) =>
+    `${plural(n, "image is", "images are")} over ${Math.round(IMAGE_SIZE_LIMIT_BYTES / 1024)} KB`,
+  "img.dims.large": (n) =>
+    `${plural(n, "image is", "images are")} larger than ${IMAGE_MAX_DIMENSION} px`,
+  "img.dims.small": (n) =>
+    `${plural(n, "image is", "images are")} smaller than ${IMAGE_MIN_DIMENSION} px`,
+  "img.count": (n) =>
+    `${plural(n, "product has", "products have")} fewer than ${MIN_IMAGES_PER_PRODUCT} images`,
+  "img.ratio": (n) => `${plural(n, "product mixes", "products mix")} image proportions`,
+  "img.duplicate": (n) => `${plural(n, "image looks", "images look")} like a duplicate upload`,
+};
+
+type FindingRow = {
+  id: string;
+  ruleId: string;
+  pageType: string;
+  severity: string;
+  title: string;
+  explanation: string | null;
+  recommendation: string | null;
+  evidenceValue: string | null;
+  pageUrl: string | null;
+  imageUrl: string | null;
+  targetTitle: string | null;
+  fixableByAI: boolean;
+};
+
+/**
+ * One row per prescription. Catalog rules (images) fire once per image or
+ * product; showing them individually buries the list, so they collapse into
+ * a single row that lists what is affected.
+ */
+function toPrescriptions(findings: FindingRow[]): Issue[] {
+  const issues: Issue[] = [];
+  const grouped = new Map<string, Issue>();
+
+  for (const f of findings) {
+    const affected = {
+      id: f.id,
+      title: f.targetTitle,
+      imageUrl: f.imageUrl,
+      pageUrl: f.pageUrl,
+      evidenceValue: f.evidenceValue,
+    };
+
+    if (!isCatalogPage(f.pageType)) {
+      issues.push({ ...f, affected: null });
+      continue;
+    }
+
+    const existing = grouped.get(f.ruleId);
+    if (existing) {
+      existing.affected!.push(affected);
+      continue;
+    }
+    const issue: Issue = { ...f, affected: [affected] };
+    grouped.set(f.ruleId, issue);
+    issues.push(issue);
+  }
+
+  for (const issue of grouped.values()) {
+    const n = issue.affected!.length;
+    issue.title = CATALOG_TITLES[issue.ruleId]?.(n) ?? `${issue.title} (${n})`;
+  }
+  return issues;
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -47,9 +128,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         select: { error: true, createdAt: true },
       });
 
-  const findings = (latestAudit?.findings ?? [])
-    .slice()
-    .sort((a, b) => SEVERITY_RANK[a.severity as Severity] - SEVERITY_RANK[b.severity as Severity]);
+  const findings = toPrescriptions(
+    (latestAudit?.findings ?? [])
+      .slice()
+      .sort((a, b) => SEVERITY_RANK[a.severity as Severity] - SEVERITY_RANK[b.severity as Severity]),
+  );
 
   const fixCount = await prisma.fix.count({
     where: { shopId: shop.id, status: "applied" },
@@ -127,8 +210,17 @@ const IMPACT: Record<Severity, { tone: "critical" | "warning" | "info"; label: s
   low: { tone: "info", label: "Low impact" },
 };
 
+type AffectedItem = {
+  id: string;
+  title: string | null;
+  imageUrl: string | null;
+  pageUrl: string | null;
+  evidenceValue: string | null;
+};
+
 type Issue = {
   id: string;
+  ruleId: string;
   severity: string;
   title: string;
   explanation: string | null;
@@ -136,7 +228,39 @@ type Issue = {
   evidenceValue: string | null;
   pageUrl: string | null;
   fixableByAI: boolean;
+  /** Set for grouped catalog prescriptions: every image or product affected. */
+  affected: AffectedItem[] | null;
 };
+
+/** How many affected items to list before summarising the rest. */
+const MAX_AFFECTED_LISTED = 25;
+
+function AffectedList({ items }: { items: AffectedItem[] }) {
+  const shown = items.slice(0, MAX_AFFECTED_LISTED);
+  const hidden = items.length - shown.length;
+
+  return (
+    <s-stack direction="block" gap="small-300">
+      <s-heading>Affected ({items.length})</s-heading>
+      {shown.map((item) => (
+        <s-stack key={item.id} direction="inline" gap="small" align-items="center">
+          {item.imageUrl ? (
+            <s-thumbnail src={item.imageUrl} alt={item.title ?? "Product image"} size="small" />
+          ) : null}
+          <s-stack direction="block" gap="small-500">
+            {item.pageUrl ? (
+              <s-link href={item.pageUrl} target="_blank">{item.title ?? "Product"}</s-link>
+            ) : (
+              <s-text>{item.title ?? "Product"}</s-text>
+            )}
+            {item.evidenceValue && <s-text color="subdued">{item.evidenceValue}</s-text>}
+          </s-stack>
+        </s-stack>
+      ))}
+      {hidden > 0 && <s-text color="subdued">And {hidden} more</s-text>}
+    </s-stack>
+  );
+}
 
 /** Storefront path, so repeated issues show which product or collection they are on. */
 function pagePath(url: string | null): string | null {
@@ -156,13 +280,19 @@ function IssueCard({ issue }: { issue: Issue }) {
   const [open, setOpen] = useState(false);
   const impact = IMPACT[issue.severity as Severity] ?? IMPACT.low;
   const path = pagePath(issue.pageUrl);
+  const productCount = issue.affected
+    ? new Set(issue.affected.map((item) => item.pageUrl ?? item.title)).size
+    : 0;
+  const subtitle = issue.affected
+    ? `Across ${productCount} ${productCount === 1 ? "product" : "products"}`
+    : path;
 
   return (
     <s-box padding="base" border-width="base none none none" border-color="base">
       <s-stack direction="inline" gap="base" align-items="center" justify-content="space-between">
         <s-stack direction="block" gap="small-300">
           <s-text type="strong">{issue.title}</s-text>
-          {path && <s-text color="subdued">{path}</s-text>}
+          {subtitle && <s-text color="subdued">{subtitle}</s-text>}
         </s-stack>
         <s-stack direction="inline" gap="small" align-items="center">
           <s-badge tone={impact.tone}>{impact.label}</s-badge>
@@ -189,18 +319,24 @@ function IssueCard({ issue }: { issue: Issue }) {
               </s-paragraph>
             </s-stack>
 
-            {issue.evidenceValue && (
-              <s-stack direction="block" gap="small-300">
-                <s-heading>What we checked</s-heading>
-                <s-paragraph color="subdued">{issue.evidenceValue}</s-paragraph>
-              </s-stack>
-            )}
+            {issue.affected ? (
+              <AffectedList items={issue.affected} />
+            ) : (
+              <>
+                {issue.evidenceValue && (
+                  <s-stack direction="block" gap="small-300">
+                    <s-heading>What we checked</s-heading>
+                    <s-paragraph color="subdued">{issue.evidenceValue}</s-paragraph>
+                  </s-stack>
+                )}
 
-            {issue.pageUrl && (
-              <s-paragraph>
-                Found on{" "}
-                <s-link href={issue.pageUrl} target="_blank">{path}</s-link>
-              </s-paragraph>
+                {issue.pageUrl && (
+                  <s-paragraph>
+                    Found on{" "}
+                    <s-link href={issue.pageUrl} target="_blank">{path}</s-link>
+                  </s-paragraph>
+                )}
+              </>
             )}
 
             {/* The apply layer (app/fixes/apply.ts) is not implemented yet, so this

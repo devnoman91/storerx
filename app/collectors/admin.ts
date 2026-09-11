@@ -187,25 +187,3 @@ export async function collectAdminData(admin: AdminApiClient): Promise<ShopData>
     passwordProtected: shopData.data?.onlineStore?.passwordProtection?.enabled === true,
   };
 }
-
-export async function collectAllProductImages(
-  admin: AdminApiClient,
-  limit = 50
-): Promise<Array<{ productId: string; productTitle: string; images: ImageData[] }>> {
-  const response = await admin.graphql(PRODUCTS_QUERY, {
-    variables: { first: limit },
-  });
-  const data = await response.json();
-
-  return (data.data?.products?.edges || []).map((edge: any) => ({
-    productId: edge.node.id,
-    productTitle: edge.node.title,
-    images: (edge.node.images?.edges || []).map((imgEdge: any) => ({
-      id: imgEdge.node.id,
-      url: imgEdge.node.url,
-      altText: imgEdge.node.altText,
-      width: imgEdge.node.width,
-      height: imgEdge.node.height,
-    })),
-  }));
-}

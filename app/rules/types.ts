@@ -105,7 +105,8 @@ export interface ImageData {
   altText?: string;
   width: number;
   height: number;
-  fileSize?: number; // bytes
+  fileSize?: number; // bytes, of the original upload
+  mimeType?: string;
 }
 
 export interface VariantData {
@@ -147,10 +148,14 @@ export interface Finding {
   /** Target resource ID if applicable (product ID, image ID, etc.) */
   targetId?: string;
   /**
-   * Storefront URL the rule ran against. Set by the audit, not by rules —
-   * a rule sees HTML, not where it came from.
+   * Storefront URL the rule ran against. Set by the audit for page rules;
+   * catalog rules (images) set it to the affected product's page.
    */
   pageUrl?: string;
+  /** Human label for targetId, when the rule already knows it. */
+  targetTitle?: string;
+  /** CDN URL of the affected image, so the UI can show a thumbnail. */
+  imageUrl?: string;
 }
 
 export type FixType =

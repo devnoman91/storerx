@@ -24,11 +24,13 @@ import {
 } from "../app/queue.server";
 import { collectAdminData } from "../app/collectors/admin";
 import { openStorefrontSession } from "../app/collectors/storefront";
+import { collectCatalogImages } from "../app/collectors/images";
 import { NonRetryableError, StorefrontLockedError } from "../app/errors";
 import { explainFindings } from "../app/ai/prompts";
 import { logUsage } from "../app/ai/generate";
 import { SEVERITY_WEIGHTS, type Finding, type ShopData } from "../app/rules/types";
 import { processAuditJob, type AuditProgress } from "./audit";
+import { collapseCatalogFindings } from "../app/scoring";
 
 /**
  * How often to look for work when the queue is empty. Audits are not
@@ -142,14 +144,17 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
 
   const result = await processAuditJob({ shopDomain, auditId }, shopData, onProgress, {
     storefrontCookie,
+    collectImages: () => collectCatalogImages(admin, shopDomain),
   });
   await progressWrites;
 
   const explanations = await explain(result.findings, shop);
   const targetTitles = buildTargetTitles(shopData);
 
+  // Count prescriptions, not rows: 40 images missing alt text is one issue.
+  const prescriptions = collapseCatalogFindings(result.findings, (f) => f.page);
   const counts = { high: 0, medium: 0, low: 0 };
-  for (const finding of result.findings) counts[finding.severity]++;
+  for (const finding of prescriptions) counts[finding.severity]++;
 
   // One transaction so a partially-written audit is never shown as completed.
   await prisma.$transaction([
@@ -170,7 +175,10 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
         fixableByAI: finding.fixableByAI,
         fixType: finding.fixType || null,
         targetId: finding.targetId || null,
-        targetTitle: finding.targetId ? targetTitles.get(finding.targetId) || null : null,
+        targetTitle:
+          finding.targetTitle ??
+          (finding.targetId ? targetTitles.get(finding.targetId) || null : null),
+        imageUrl: finding.imageUrl || null,
       })),
     }),
     prisma.pageScore.createMany({
@@ -195,7 +203,7 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
         performanceScore: result.scores.performance,
         seoScore: result.scores.seo,
         productPagesScore: result.scores.productPages,
-        totalIssues: result.findings.length,
+        totalIssues: prescriptions.length,
         highCount: counts.high,
         mediumCount: counts.medium,
         lowCount: counts.low,

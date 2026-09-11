@@ -12,7 +12,8 @@
  * - Checkout settings (Admin API, not crawled)
  */
 
-import { runRulesWithSummary, type Finding, type PageType, type ShopData } from "../app/rules";
+import { checkCatalogImages, runRulesWithSummary, type Finding, type PageType, type ShopData } from "../app/rules";
+import type { CatalogImages } from "../app/collectors/images";
 import { calculateScore, calculateStoreHealth } from "../app/scoring";
 import { collectStorefrontPage, buildAuditPageList, closeBrowser } from "../app/collectors/storefront";
 import { runLighthouseAudit, type LighthouseResult } from "../app/collectors/lighthouse";
@@ -57,8 +58,9 @@ export interface AuditProgress {
 const AUDIT_STEPS = [
   { step: "Collecting store data", weight: 5 },
   { step: "Scanning homepage", weight: 15 },
-  { step: "Scanning collections", weight: 20 },
-  { step: "Scanning product pages", weight: 35 },
+  { step: "Scanning collections", weight: 15 },
+  { step: "Scanning product pages", weight: 30 },
+  { step: "Scanning product images", weight: 10 },
   { step: "Running performance audit", weight: 15 },
   { step: "Analyzing results", weight: 10 },
 ];
@@ -71,6 +73,11 @@ function atPage(findings: Finding[], pageUrl: string): Finding[] {
 export interface AuditJobOptions {
   /** Cookie from openStorefrontSession, when the storefront is password-protected. */
   storefrontCookie?: string;
+  /**
+   * Reads catalog image metadata. A callback rather than an Admin client so
+   * the fetch happens inside its own progress step.
+   */
+  collectImages?: () => Promise<CatalogImages>;
 }
 
 export async function processAuditJob(
@@ -179,11 +186,25 @@ export async function processAuditJob(
     // Clean up browser
     await closeBrowser();
 
+    // Step 5: Catalog image checks. Admin API metadata only, so it covers the
+    // whole catalog (up to the scan cap), not just the sampled product pages.
+    if (options.collectImages) {
+      updateProgress(4);
+      const catalog = await options.collectImages();
+      const imageFindings = checkCatalogImages(catalog.products);
+      allFindings.push(...imageFindings);
+      const scannedImages = catalog.products.reduce((n, p) => n + p.images.length, 0);
+      updateProgress(
+        4,
+        `Checked ${scannedImages} images across ${catalog.products.length} of ${catalog.totalProducts} products`,
+      );
+    }
+
     // Step 5: Run Lighthouse on homepage.
     // Both strategies, because the Performance score is weighted mobile 70 /
     // desktop 30 (FEATURES.md §3). Two PSI calls — set PAGESPEED_API_KEY to
     // avoid the unkeyed rate limit.
-    updateProgress(4);
+    updateProgress(5);
     const hasPsiKey = Boolean(process.env.PAGESPEED_API_KEY);
     // PageSpeed runs on Google's servers and cannot use our storefront login,
     // so on a password-protected store it would only ever measure the lock
@@ -212,7 +233,7 @@ export async function processAuditJob(
     // Performance findings come from the mobile run — that is what the score
     // is weighted toward, and what most storefront traffic is.
     if (lighthouseResult.mobile) {
-      updateProgress(4, "Analyzing performance");
+      updateProgress(5, "Analyzing performance");
       const perfFindings = runRulesWithSummary("perf", {
         html: "",
         shopData,
@@ -229,7 +250,7 @@ export async function processAuditJob(
     }
 
     // Step 6: Check checkout settings + calculate final scores
-    updateProgress(5);
+    updateProgress(6);
     const checkoutRules = runRulesWithSummary("checkout", {
       html: "",
       shopData,
