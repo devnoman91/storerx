@@ -6,6 +6,7 @@
  */
 
 import type { LighthouseMetrics, ThirdPartyScript } from "../rules/types";
+import { isPasswordPage } from "./storefront";
 
 // PageSpeed Insights API (free, no key needed for basic use)
 const PSI_API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
@@ -90,6 +91,14 @@ async function runPSIAudit(
 
   if (!lhr) {
     throw new Error("No Lighthouse result in response");
+  }
+
+  // PSI cannot log in, so on a password-protected store it measures the lock
+  // screen — a near-perfect score for a page with no store on it. Refuse it,
+  // so the caller records performance as unmeasured instead.
+  const measured: string = lhr.finalDisplayedUrl || lhr.finalUrl || "";
+  if (isPasswordPage(measured)) {
+    throw new Error(`PageSpeed measured the storefront password page (${measured}), not the store`);
   }
 
   const audits = lhr.audits || {};

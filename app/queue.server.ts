@@ -17,6 +17,12 @@ export const STALE_AUDIT_MS = 15 * 60 * 1000;
 /** Claims allowed per audit before it is abandoned, so a crash can't loop. */
 export const MAX_ATTEMPTS = 2;
 
+/** How often a worker reports it is alive, independent of job progress. */
+export const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** A worker silent for longer than this is treated as not running. */
+const HEARTBEAT_STALE_MS = HEARTBEAT_INTERVAL_MS * 3;
+
 export interface ClaimedAudit {
   id: string;
   shopId: string;
@@ -31,8 +37,11 @@ export async function enqueueAudit(shopId: string): Promise<{ id: string; create
   const inFlight = await prisma.audit.findFirst({
     where: {
       shopId,
-      status: { in: ["pending", "running"] },
-      createdAt: { gte: new Date(Date.now() - STALE_AUDIT_MS) },
+      OR: [
+        // Pending never goes stale: it is waiting for a worker, not abandoned.
+        { status: "pending" },
+        { status: "running", createdAt: { gte: new Date(Date.now() - STALE_AUDIT_MS) } },
+      ],
     },
     select: { id: true },
     orderBy: { createdAt: "desc" },
@@ -96,8 +105,10 @@ export async function reportProgress(
 export async function failAudit(
   audit: ClaimedAudit,
   message: string,
+  { retryable = true }: { retryable?: boolean } = {},
 ): Promise<{ willRetry: boolean }> {
-  const willRetry = audit.attempts < MAX_ATTEMPTS;
+  // Some failures need the merchant to act; retrying just delays the message.
+  const willRetry = retryable && audit.attempts < MAX_ATTEMPTS;
   await prisma.audit.update({
     where: { id: audit.id },
     data: {
@@ -137,4 +148,32 @@ export async function reapStaleAudits(shopId?: string): Promise<number> {
   });
 
   return retryable.count + exhausted.count;
+}
+
+/** Record that a worker is alive. Never throws — liveness is advisory. */
+export async function recordHeartbeat(workerId: string): Promise<void> {
+  const now = new Date();
+  try {
+    await prisma.workerHeartbeat.upsert({
+      where: { id: workerId },
+      update: { lastSeenAt: now },
+      create: { id: workerId, lastSeenAt: now },
+    });
+  } catch (error) {
+    console.error("[queue] heartbeat failed:", error);
+  }
+}
+
+/** Remove a worker's heartbeat on clean shutdown, so it stops counting at once. */
+export async function clearHeartbeat(workerId: string): Promise<void> {
+  await prisma.workerHeartbeat.deleteMany({ where: { id: workerId } }).catch(() => {});
+}
+
+/** Whether any worker has reported in recently. */
+export async function isWorkerAlive(): Promise<boolean> {
+  const recent = await prisma.workerHeartbeat.findFirst({
+    where: { lastSeenAt: { gte: new Date(Date.now() - HEARTBEAT_STALE_MS) } },
+    select: { id: true },
+  });
+  return recent !== null;
 }

@@ -88,6 +88,11 @@ const COLLECTIONS_QUERY = `
 
 const SHOP_QUERY = `
   query GetShop {
+    onlineStore {
+      passwordProtection {
+        enabled
+      }
+    }
     shop {
       name
       myshopifyDomain
@@ -179,6 +184,7 @@ export async function collectAdminData(admin: AdminApiClient): Promise<ShopData>
     collections,
     checkoutSettings,
     installedApps: [],
+    passwordProtected: shopData.data?.onlineStore?.passwordProtection?.enabled === true,
   };
 }
 

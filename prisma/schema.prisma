@@ -47,6 +47,11 @@ model Shop {
   // Brand voice sample for AI generation
   brandVoice String?
 
+  // Storefront password, so audits can scan password-protected stores
+  // (FEATURES.md §15). A viewing password merchants share with testers — not
+  // an admin credential — and never sent back to the browser.
+  storefrontPassword String?
+
   // Audit settings
   auditSchedule String  @default("weekly") // weekly, monthly, manual
   emailSummary  Boolean @default(true)
@@ -127,8 +132,13 @@ model Finding {
   severity String // high, medium, low
 
   // Display
-  title       String
-  explanation String? // AI-generated explanation
+  title          String
+  explanation    String? // AI: why it matters
+  recommendation String? // AI: how to fix it manually
+
+  // Storefront URL the rule ran against. Null for settings-level checks
+  // (checkout, perf) that are not tied to one page.
+  pageUrl String?
 
   // Evidence
   evidenceType  String? // selector, text, screenshot
@@ -224,4 +234,11 @@ model AiUsage {
   estimatedCost Float?
 
   createdAt DateTime @default(now())
+}
+
+// Liveness signal from each running worker, so the dashboard can tell a scan
+// that is waiting for a worker apart from one that is in progress.
+model WorkerHeartbeat {
+  id         String   @id // hostname:pid
+  lastSeenAt DateTime
 }

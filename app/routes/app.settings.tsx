@@ -5,8 +5,17 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shopDomain = session.shop;
+
+  // Admin API only — no storefront fetch here. Tells the merchant whether
+  // scans need the storefront password at all.
+  const protection = await admin.graphql(`#graphql
+    query StorefrontPasswordProtection {
+      onlineStore { passwordProtection { enabled } }
+    }`);
+  const passwordProtected =
+    (await protection.json()).data?.onlineStore?.passwordProtection?.enabled === true;
 
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) {
@@ -18,6 +27,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     auditSchedule: shop.auditSchedule,
     emailSummary: shop.emailSummary,
     plan: shop.plan,
+    passwordProtected,
+    // Whether one is saved — the password itself never leaves the server.
+    hasStorefrontPassword: Boolean(shop.storefrontPassword),
   };
 };
 
@@ -26,10 +38,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shopDomain = session.shop;
   const formData = await request.formData();
 
+  // Blank means "keep the saved one": the field is never pre-filled.
+  const storefrontPassword = ((formData.get("storefrontPassword") as string) || "").trim();
+
   const settings = {
     brandVoice: (formData.get("brandVoice") as string) || null,
     auditSchedule: (formData.get("auditSchedule") as string) || "weekly",
     emailSummary: formData.get("emailSummary") === "on",
+    ...(storefrontPassword ? { storefrontPassword } : {}),
   };
 
   // Upsert: the loader creates the shop row, but a POST can arrive first.
@@ -80,6 +96,35 @@ export default function Settings() {
               borderRadius: 8,
               fontSize: 14,
               resize: "vertical",
+            }}
+          />
+        </div>
+
+        {/* Storefront password */}
+        <div style={{ marginBottom: 24 }}>
+          <label htmlFor="storefrontPassword" style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
+            Storefront password
+          </label>
+          <p style={{ fontSize: 13, color: data.passwordProtected && !data.hasStorefrontPassword ? "#92400E" : "#6B7280", margin: "0 0 8px 0" }}>
+            {data.passwordProtected
+              ? data.hasStorefrontPassword
+                ? "Your store is password-protected. A password is saved — enter a new one only to change it."
+                : "Your store is password-protected, so scans can only see the password page until you add it here. Find it in Shopify admin under Online Store → Preferences."
+              : "Your storefront is public, so scans don't need a password."}
+          </p>
+          <input
+            id="storefrontPassword"
+            name="storefrontPassword"
+            type="password"
+            autoComplete="off"
+            placeholder={data.hasStorefrontPassword ? "•••••••• (saved)" : "Storefront password"}
+            style={{
+              width: "100%",
+              maxWidth: 320,
+              padding: "8px 12px",
+              border: "1px solid #D1D5DB",
+              borderRadius: 8,
+              fontSize: 14,
             }}
           />
         </div>

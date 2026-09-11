@@ -1,10 +1,10 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, Link } from "react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
-import { enqueueAudit, reapStaleAudits } from "../queue.server";
+import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
 
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
 type Severity = keyof typeof SEVERITY_RANK;
@@ -24,7 +24,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const runningAudit = await prisma.audit.findFirst({
     where: { shopId: shop.id, status: { in: ["pending", "running"] } },
     orderBy: { createdAt: "desc" },
-    select: { id: true, progress: true, currentStep: true },
+    select: { id: true, status: true, progress: true, currentStep: true },
   });
 
   const latestAudit = await prisma.audit.findFirst({
@@ -60,6 +60,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     hasAudit: !!latestAudit,
     lastAuditDate: latestAudit?.completedAt?.toLocaleDateString() || null,
     runningAudit,
+    // Only worth a query while something is waiting to be picked up.
+    workerAlive: runningAudit?.status === "pending" ? await isWorkerAlive() : true,
     failedError:
       failedAudit && (!latestAudit || failedAudit.createdAt > latestAudit.createdAt)
         ? failedAudit.error
@@ -119,60 +121,107 @@ function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"
   );
 }
 
-function IssueCard({ severity, title, explanation, fixable }: {
-  severity: Severity;
+const IMPACT: Record<Severity, { tone: "critical" | "warning" | "info"; label: string }> = {
+  high: { tone: "critical", label: "High impact" },
+  medium: { tone: "warning", label: "Medium impact" },
+  low: { tone: "info", label: "Low impact" },
+};
+
+type Issue = {
+  id: string;
+  severity: string;
   title: string;
   explanation: string | null;
-  fixable: boolean;
-}) {
-  const severityColors = {
-    high: "#EF4444",
-    medium: "#F59E0B",
-    low: "#6B7280",
-  };
+  recommendation: string | null;
+  evidenceValue: string | null;
+  pageUrl: string | null;
+  fixableByAI: boolean;
+};
+
+/** Storefront path, so repeated issues show which product or collection they are on. */
+function pagePath(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).pathname || "/";
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * One prescription row. "View" expands it inline with why it matters, how to
+ * fix it, and where it was found (DESIGN.md §4.3).
+ */
+function IssueCard({ issue }: { issue: Issue }) {
+  const [open, setOpen] = useState(false);
+  const impact = IMPACT[issue.severity as Severity] ?? IMPACT.low;
+  const path = pagePath(issue.pageUrl);
 
   return (
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      gap: 12,
-      padding: "16px 20px",
-      borderBottom: "1px solid #E5E7EB",
-    }}>
-      <div style={{
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: severityColors[severity],
-        flexShrink: 0,
-      }} />
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14 }}>{title}</div>
-        {explanation && (
-          <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{explanation}</div>
-        )}
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        {fixable ? (
-          <s-button variant="primary">Fix with AI</s-button>
-        ) : (
-          <s-button>View</s-button>
-        )}
-      </div>
-    </div>
+    <s-box padding="base" border-width="base none none none" border-color="base">
+      <s-stack direction="inline" gap="base" align-items="center" justify-content="space-between">
+        <s-stack direction="block" gap="small-300">
+          <s-text type="strong">{issue.title}</s-text>
+          {path && <s-text color="subdued">{path}</s-text>}
+        </s-stack>
+        <s-stack direction="inline" gap="small" align-items="center">
+          <s-badge tone={impact.tone}>{impact.label}</s-badge>
+          <s-button variant="secondary" onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide" : "View"}
+          </s-button>
+        </s-stack>
+      </s-stack>
+
+      {open && (
+        <s-box padding-block-start="base">
+          <s-stack direction="block" gap="base">
+            <s-stack direction="block" gap="small-300">
+              <s-heading>Why it matters</s-heading>
+              <s-paragraph>
+                {issue.explanation ?? "Explanation not available for this issue yet."}
+              </s-paragraph>
+            </s-stack>
+
+            <s-stack direction="block" gap="small-300">
+              <s-heading>How to fix</s-heading>
+              <s-paragraph>
+                {issue.recommendation ?? "Run a new scan to get fix steps for this issue."}
+              </s-paragraph>
+            </s-stack>
+
+            {issue.evidenceValue && (
+              <s-stack direction="block" gap="small-300">
+                <s-heading>What we checked</s-heading>
+                <s-paragraph color="subdued">{issue.evidenceValue}</s-paragraph>
+              </s-stack>
+            )}
+
+            {issue.pageUrl && (
+              <s-paragraph>
+                Found on{" "}
+                <s-link href={issue.pageUrl} target="_blank">{path}</s-link>
+              </s-paragraph>
+            )}
+
+            {/* The apply layer (app/fixes/apply.ts) is not implemented yet, so this
+                stays disabled with a visible reason rather than a dead button. */}
+            {issue.fixableByAI && (
+              <s-stack direction="inline" gap="small" align-items="center">
+                <s-button disabled>Fix with AI</s-button>
+                <s-text color="subdued">AI fixes are coming soon — use the steps above for now.</s-text>
+              </s-stack>
+            )}
+          </s-stack>
+        </s-box>
+      )}
+    </s-box>
   );
 }
 
 function IssueSection({ heading, color, issues }: {
   heading: string;
   color: string;
-  issues: Array<{
-    id: string;
-    severity: string;
-    title: string;
-    explanation: string | null;
-    fixableByAI: boolean;
-  }>;
+  issues: Issue[];
 }) {
   if (issues.length === 0) return null;
 
@@ -183,13 +232,7 @@ function IssueSection({ heading, color, issues }: {
       </h2>
       <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden" }}>
         {issues.map((issue) => (
-          <IssueCard
-            key={issue.id}
-            severity={issue.severity as Severity}
-            title={issue.title}
-            explanation={issue.explanation}
-            fixable={issue.fixableByAI}
-          />
+          <IssueCard key={issue.id} issue={issue} />
         ))}
       </div>
     </div>
@@ -242,6 +285,17 @@ export default function Dashboard() {
         </s-banner>
       )}
 
+      {/* A pending scan with no live worker would otherwise sit at 0% with
+          no explanation. Say what is actually wrong. */}
+      {isScanning && data.runningAudit?.status === "pending" && !data.workerAlive && (
+        <s-banner tone="warning" heading="Your scan is queued but not started">
+          The scan worker isn&apos;t running, so nothing is processing it yet. Start it
+          with <s-text type="strong">npm run dev</s-text> (it now starts the worker
+          automatically), or run <s-text type="strong">npm run worker</s-text> in a
+          separate terminal. The scan will begin as soon as a worker is up.
+        </s-banner>
+      )}
+
       {isScanning && (
         <div style={{
           padding: 20,
@@ -253,7 +307,9 @@ export default function Dashboard() {
             Scanning your store…
           </div>
           <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 12 }}>
-            {data.runningAudit?.currentStep || "Getting started"} · {data.runningAudit?.progress ?? 0}%
+            {data.runningAudit?.status === "pending"
+              ? "Waiting to start"
+              : `${data.runningAudit?.currentStep || "Getting started"} · ${data.runningAudit?.progress ?? 0}%`}
           </div>
           <div style={{ height: 6, background: "#DBEAFE", borderRadius: 3, overflow: "hidden" }}>
             <div style={{
