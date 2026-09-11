@@ -15,7 +15,7 @@
 import { runRulesWithSummary, type Finding, type PageType, type ShopData } from "../app/rules";
 import { calculateScore, calculateStoreHealth } from "../app/scoring";
 import { collectStorefrontPage, buildAuditPageList, closeBrowser } from "../app/collectors/storefront";
-import { runLighthouseAudit } from "../app/collectors/lighthouse";
+import { runLighthouseAudit, type LighthouseResult } from "../app/collectors/lighthouse";
 
 export interface AuditJobData {
   shopDomain: string;
@@ -63,12 +63,24 @@ const AUDIT_STEPS = [
   { step: "Analyzing results", weight: 10 },
 ];
 
+/** Record which storefront URL a page's findings were detected on. */
+function atPage(findings: Finding[], pageUrl: string): Finding[] {
+  return findings.map((finding) => ({ ...finding, pageUrl }));
+}
+
+export interface AuditJobOptions {
+  /** Cookie from openStorefrontSession, when the storefront is password-protected. */
+  storefrontCookie?: string;
+}
+
 export async function processAuditJob(
   data: AuditJobData,
   shopData: ShopData,
-  onProgress?: (progress: AuditProgress) => void
+  onProgress?: (progress: AuditProgress) => void,
+  options: AuditJobOptions = {},
 ): Promise<AuditJobResult> {
   const { shopDomain, auditId } = data;
+  const collectorOptions = { domain: shopDomain, cookie: options.storefrontCookie };
   const allFindings: Finding[] = [];
   const pageResults: AuditJobResult["pageResults"] = [];
 
@@ -97,22 +109,21 @@ export async function processAuditJob(
     // Step 2: Scan homepage
     updateProgress(1);
     const homepageUrl = `https://${shopDomain}`;
-    const homepage = await collectStorefrontPage(homepageUrl, "homepage", {
-      domain: shopDomain,
-    });
+    const homepage = await collectStorefrontPage(homepageUrl, "homepage", collectorOptions);
 
     const homepageRules = runRulesWithSummary("homepage", {
       html: homepage.html,
       shopData,
     });
 
-    allFindings.push(...homepageRules.findings);
+    const homepageFindings = atPage(homepageRules.findings, homepageUrl);
+    allFindings.push(...homepageFindings);
     pageResults.push({
       url: homepageUrl,
       pageType: "homepage",
       croScore: calculateScore(homepageRules.findings),
       perfScore: 0, // Set after Lighthouse
-      findings: homepageRules.findings,
+      findings: homepageFindings,
     });
 
     // Step 3: Scan collections
@@ -122,22 +133,21 @@ export async function processAuditJob(
       updateProgress(2, `Scanning collection ${i + 1}/${collectionPages.length}`);
       const page = collectionPages[i];
 
-      const collPage = await collectStorefrontPage(page.url, "collection", {
-        domain: shopDomain,
-      });
+      const collPage = await collectStorefrontPage(page.url, "collection", collectorOptions);
 
       const collRules = runRulesWithSummary("collection", {
         html: collPage.html,
         shopData,
       });
 
-      allFindings.push(...collRules.findings);
+      const collFindings = atPage(collRules.findings, page.url);
+      allFindings.push(...collFindings);
       pageResults.push({
         url: page.url,
         pageType: "collection",
         croScore: calculateScore(collRules.findings),
         perfScore: 0,
-        findings: collRules.findings,
+        findings: collFindings,
       });
     }
 
@@ -148,22 +158,21 @@ export async function processAuditJob(
       updateProgress(3, `Scanning product ${i + 1}/${productPages.length}`);
       const page = productPages[i];
 
-      const prodPage = await collectStorefrontPage(page.url, "product", {
-        domain: shopDomain,
-      });
+      const prodPage = await collectStorefrontPage(page.url, "product", collectorOptions);
 
       const prodRules = runRulesWithSummary("product", {
         html: prodPage.html,
         shopData,
       });
 
-      allFindings.push(...prodRules.findings);
+      const prodFindings = atPage(prodRules.findings, page.url);
+      allFindings.push(...prodFindings);
       pageResults.push({
         url: page.url,
         pageType: "product",
         croScore: calculateScore(prodRules.findings),
         perfScore: 0,
-        findings: prodRules.findings,
+        findings: prodFindings,
       });
     }
 
@@ -176,15 +185,24 @@ export async function processAuditJob(
     // avoid the unkeyed rate limit.
     updateProgress(4);
     const hasPsiKey = Boolean(process.env.PAGESPEED_API_KEY);
-    const lighthouseResult = await runLighthouseAudit({
-      url: homepageUrl,
-      mobile: true,
-      // Desktop doubles the PSI calls, which trips the unkeyed quota. Without
-      // a key the score is mobile-only rather than the §3 70/30 weighting.
-      desktop: hasPsiKey,
-    });
+    // PageSpeed runs on Google's servers and cannot use our storefront login,
+    // so on a password-protected store it would only ever measure the lock
+    // screen. Skip it: performance is unmeasured, not falsely perfect.
+    const lighthouseResult: LighthouseResult = shopData.passwordProtected
+      ? { combinedScore: null }
+      : await runLighthouseAudit({
+          url: homepageUrl,
+          mobile: true,
+          // Desktop doubles the PSI calls, which trips the unkeyed quota. Without
+          // a key the score is mobile-only rather than the §3 70/30 weighting.
+          desktop: hasPsiKey,
+        });
     if (lighthouseResult.combinedScore === null) {
-      console.warn("[audit] Lighthouse unavailable — performance left unmeasured");
+      console.warn(
+        shopData.passwordProtected
+          ? "[audit] storefront is password-protected — PageSpeed skipped, performance unmeasured"
+          : "[audit] Lighthouse unavailable — performance left unmeasured",
+      );
     }
     const homepageIdx = pageResults.findIndex((p) => p.pageType === "homepage");
     if (homepageIdx >= 0) {

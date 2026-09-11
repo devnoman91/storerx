@@ -9,16 +9,22 @@
  * No message broker. Postgres holds the queue (see app/queue.server.ts).
  */
 
+import { hostname } from "node:os";
 import prisma from "../app/db.server";
 import { unauthenticated } from "../app/shopify.server";
 import {
   claimNextAudit,
+  clearHeartbeat,
   failAudit,
+  HEARTBEAT_INTERVAL_MS,
   reapStaleAudits,
+  recordHeartbeat,
   reportProgress,
   type ClaimedAudit,
 } from "../app/queue.server";
 import { collectAdminData } from "../app/collectors/admin";
+import { openStorefrontSession } from "../app/collectors/storefront";
+import { NonRetryableError, StorefrontLockedError } from "../app/errors";
 import { explainFindings } from "../app/ai/prompts";
 import { logUsage } from "../app/ai/generate";
 import { SEVERITY_WEIGHTS, type Finding, type ShopData } from "../app/rules/types";
@@ -34,10 +40,20 @@ const IDLE_POLL_MS = 10_000;
 /** How often to reclaim audits abandoned by a dead worker. */
 const REAP_INTERVAL_MS = 60_000;
 
-/** Cap on findings sent to the LLM for explanation, highest severity first. */
-const MAX_EXPLAINED_FINDINGS = 20;
+/** Cap on distinct rules sent to the LLM for explanation, highest severity first. */
+const MAX_EXPLAINED_RULES = 25;
+
+interface Explanation {
+  explanation: string;
+  recommendation: string;
+}
+
+const WORKER_ID = `${hostname()}:${process.pid}`;
 
 let shuttingDown = false;
+
+/** Resolves the current idle sleep early, so shutdown doesn't wait it out. */
+let wakeFromSleep: (() => void) | null = null;
 
 /** Build targetId -> human label lookups so findings can name what they point at. */
 function buildTargetTitles(shopData: ShopData): Map<string, string> {
@@ -57,13 +73,20 @@ function buildTargetTitles(shopData: ShopData): Map<string, string> {
 async function explain(
   findings: Finding[],
   shop: { domain: string; name: string | null; brandVoice: string | null },
-): Promise<Map<string, string>> {
-  const explanations = new Map<string, string>();
+): Promise<Map<string, Explanation>> {
+  const explanations = new Map<string, Explanation>();
   if (findings.length === 0) return explanations;
 
-  const ranked = [...findings]
+  // One entry per rule. The same rule fires once per sampled product, and the
+  // explanation is keyed by ruleId anyway — sending the repeats spent the cap
+  // on duplicates and left most distinct rules unexplained.
+  const byRule = new Map<string, Finding>();
+  for (const finding of findings) {
+    if (!byRule.has(finding.ruleId)) byRule.set(finding.ruleId, finding);
+  }
+  const ranked = [...byRule.values()]
     .sort((a, b) => SEVERITY_WEIGHTS[b.severity] - SEVERITY_WEIGHTS[a.severity])
-    .slice(0, MAX_EXPLAINED_FINDINGS);
+    .slice(0, MAX_EXPLAINED_RULES);
 
   try {
     const result = await explainFindings(ranked, {
@@ -71,7 +94,10 @@ async function explain(
       brandVoice: shop.brandVoice || undefined,
     });
     for (const item of result.data.findings) {
-      explanations.set(item.ruleId, `${item.explanation} ${item.recommendation}`.trim());
+      explanations.set(item.ruleId, {
+        explanation: item.explanation,
+        recommendation: item.recommendation,
+      });
     }
     await logUsage(shop.domain, "explain", "gpt-4.1-mini", result.usage);
   } catch (error) {
@@ -100,7 +126,23 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
   const { admin } = await unauthenticated.admin(shopDomain);
   const shopData = await collectAdminData(admin);
 
-  const result = await processAuditJob({ shopDomain, auditId }, shopData, onProgress);
+  // Development stores are always password-protected. Log in once so every
+  // page fetch sees the real store instead of the lock screen.
+  let storefrontCookie: string | undefined;
+  if (shopData.passwordProtected) {
+    if (!shop.storefrontPassword) {
+      throw new StorefrontLockedError(
+        "Your storefront is password-protected, so StoreRx can only see the password " +
+          "page. Add your storefront password in StoreRx Settings to scan your real pages.",
+      );
+    }
+    onProgress({ status: "running", currentStep: "Unlocking storefront", current: 0, total: 0, percent: 0 });
+    storefrontCookie = await openStorefrontSession(shopDomain, shop.storefrontPassword);
+  }
+
+  const result = await processAuditJob({ shopDomain, auditId }, shopData, onProgress, {
+    storefrontCookie,
+  });
   await progressWrites;
 
   const explanations = await explain(result.findings, shop);
@@ -120,7 +162,9 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
         pageType: finding.page,
         severity: finding.severity,
         title: finding.title,
-        explanation: explanations.get(finding.ruleId) || null,
+        explanation: explanations.get(finding.ruleId)?.explanation || null,
+        recommendation: explanations.get(finding.ruleId)?.recommendation || null,
+        pageUrl: finding.pageUrl || null,
         evidenceType: finding.evidence?.type || null,
         evidenceValue: finding.evidence?.value || null,
         fixableByAI: finding.fixableByAI,
@@ -182,7 +226,9 @@ async function drain(): Promise<boolean> {
       await runAudit(claimed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const { willRetry } = await failAudit(claimed, message);
+      const { willRetry } = await failAudit(claimed, message, {
+        retryable: !(error instanceof NonRetryableError),
+      });
       console.error(
         `[worker] audit ${claimed.id} failed on attempt ${claimed.attempts}` +
           `${willRetry ? " (will retry)" : " (giving up)"}: ${message}`,
@@ -194,7 +240,12 @@ async function drain(): Promise<boolean> {
 }
 
 async function main() {
-  console.log(`[worker] polling for audits every ${IDLE_POLL_MS / 1000}s`);
+  console.log(`[worker] ${WORKER_ID} polling for audits every ${IDLE_POLL_MS / 1000}s`);
+
+  // On its own timer rather than in the poll loop: an audit takes minutes, and
+  // the dashboard must not decide the worker is dead while it is mid-audit.
+  await recordHeartbeat(WORKER_ID);
+  const heartbeat = setInterval(() => void recordHeartbeat(WORKER_ID), HEARTBEAT_INTERVAL_MS);
 
   let lastReapAt = 0;
 
@@ -216,15 +267,28 @@ async function main() {
     await sleep(IDLE_POLL_MS);
   }
 
+  clearInterval(heartbeat);
+  await clearHeartbeat(WORKER_ID);
   await prisma.$disconnect();
   console.log("[worker] stopped");
 }
 
+/**
+ * Interruptible sleep. The timer is deliberately *not* unref'd: an idle worker
+ * has nothing else holding the event loop open, so an unref'd timer let Node
+ * decide the process was finished and exit the moment the queue emptied.
+ */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    // Don't hold the process open during shutdown.
-    timer.unref?.();
+    const timer = setTimeout(() => {
+      wakeFromSleep = null;
+      resolve();
+    }, ms);
+    wakeFromSleep = () => {
+      clearTimeout(timer);
+      wakeFromSleep = null;
+      resolve();
+    };
   });
 }
 
@@ -233,6 +297,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     if (shuttingDown) process.exit(1); // second signal: force
     console.log(`[worker] ${signal} received, finishing current audit...`);
     shuttingDown = true;
+    wakeFromSleep?.();
   });
 }
 

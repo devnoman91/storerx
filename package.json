@@ -4,7 +4,7 @@
   "scripts": {
     "build": "react-router build",
     "dev": "shopify app dev",
-    "worker": "tsx watch --env-file-if-exists=.env worker/index.ts",
+    "worker": "tsx watch --clear-screen=false --env-file-if-exists=.env worker/index.ts",
     "worker:start": "tsx --env-file-if-exists=.env worker/index.ts",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
@@ -54,6 +54,7 @@
     "@types/react-dom": "^18.3.7",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
+    "concurrently": "^10.0.5",
     "eslint": "^8.57.1",
     "eslint-import-resolver-typescript": "^4.4.4",
     "eslint-plugin-import": "^2.32.0",

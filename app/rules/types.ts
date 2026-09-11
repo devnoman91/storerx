@@ -67,6 +67,11 @@ export interface ShopData {
   collections: CollectionData[];
   checkoutSettings: CheckoutSettings;
   installedApps: string[];
+  /**
+   * Storefront is behind Shopify's password page. Development stores always
+   * are, and cannot turn it off without a paid plan.
+   */
+  passwordProtected: boolean;
 }
 
 export interface ProductData {
@@ -141,6 +146,11 @@ export interface Finding {
   fixType?: FixType;
   /** Target resource ID if applicable (product ID, image ID, etc.) */
   targetId?: string;
+  /**
+   * Storefront URL the rule ran against. Set by the audit, not by rules —
+   * a rule sees HTML, not where it came from.
+   */
+  pageUrl?: string;
 }
 
 export type FixType =
