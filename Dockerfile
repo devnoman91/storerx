@@ -13,6 +13,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY . .
 
-RUN npm run build
+# Generate the Prisma client at build time: the worker process never runs
+# `npm run setup`, so it would otherwise start without one.
+RUN npx prisma generate && npm run build
 
 CMD ["npm", "run", "docker-start"]

@@ -1,7 +1,18 @@
 app = "storerx"
-primary_region = "sin"
+primary_region = "sjc"
 
 [build]
+
+# Run migrations once per release, before any machine starts. Without this the
+# worker could boot on the new code before the app process had migrated.
+[deploy]
+  release_command = "npx prisma migrate deploy"
+
+# Two process groups from one image. Only `app` serves HTTP; the worker polls
+# the Audit table (see app/queue.server.ts).
+[processes]
+  app = "npm run docker-start"
+  worker = "npm run worker:prod"
 
 [env]
   HOST = "0.0.0.0"

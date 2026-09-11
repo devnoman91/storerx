@@ -7,6 +7,7 @@
     "dev:app": "concurrently --kill-others --names web,worker --prefix-colors blue,magenta \"react-router dev\" \"npm run worker\"",
     "worker": "tsx watch --clear-screen=false --env-file-if-exists=.env worker/index.ts",
     "worker:start": "tsx --env-file-if-exists=.env worker/index.ts",
+    "worker:prod": "tsx worker/index.ts",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
     "deploy": "shopify app deploy",
@@ -43,6 +44,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "^7.12.0",
+    "tsx": "^4.23.13",
     "vite-tsconfig-paths": "^6.0.4",
     "zod": "^4.6.1"
   },
@@ -64,7 +66,6 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "graphql-config": "^5.1.1",
     "prettier": "^3.6.2",
-    "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^5.0.0"

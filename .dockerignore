@@ -1,3 +1,13 @@
 .cache
 build
 node_modules
+.git
+
+# Secrets come from `fly secrets`, never from the image. The Dockerfile runs
+# `COPY . .`, so without this every key in .env would be baked into a layer.
+.env
+.env.*
+
+# Not needed at runtime.
+tests
+coverage
