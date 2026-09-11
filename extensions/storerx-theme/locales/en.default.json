@@ -1,0 +1,25 @@
+{
+  "faq": {
+    "heading": "Frequently asked questions",
+    "placeholder": "StoreRx FAQ: questions appear here once you generate them for this product in StoreRx."
+  },
+  "trust_badges": {
+    "shipping": "Free shipping",
+    "returns": "Easy returns",
+    "secure": "Secure checkout",
+    "support": "Friendly support",
+    "guarantee": "Satisfaction guaranteed"
+  },
+  "related_products": {
+    "heading": "You may also like",
+    "placeholder": "StoreRx cross-sells: related products appear here once you choose them for this product in StoreRx.",
+    "sale_price": "Sale price",
+    "regular_price": "Regular price"
+  },
+  "shipping_bar": {
+    "remaining": "You're {{ amount }} away from free shipping",
+    "empty": "Free shipping on orders over {{ amount }}",
+    "reached": "You've unlocked free shipping",
+    "close": "Dismiss free shipping message"
+  }
+}

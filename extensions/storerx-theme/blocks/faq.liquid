@@ -1,0 +1,37 @@
+{%- liquid
+  assign questions = block.settings.product.metafields.storerx.faq.value.questions
+  assign heading = block.settings.heading
+  if heading == blank
+    assign heading = 'faq.heading' | t
+  endif
+-%}
+
+{%- if questions.size > 0 -%}
+  <div class="storerx storerx-faq" {{ block.shopify_attributes }}>
+    <h2 class="storerx-faq__heading">{{ heading | escape }}</h2>
+    {%- for item in questions -%}
+      <details class="storerx-faq__item" {% if forloop.first and block.settings.open_first %}open{% endif %}>
+        <summary class="storerx-faq__question">{{ item.question | escape }}</summary>
+        <div class="storerx-faq__answer">{{ item.answer | escape | newline_to_br }}</div>
+      </details>
+    {%- endfor -%}
+  </div>
+{%- elsif request.design_mode -%}
+  <div class="storerx storerx-placeholder" {{ block.shopify_attributes }}>
+    {{ 'faq.placeholder' | t }}
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:blocks.faq.name",
+  "target": "section",
+  "enabled_on": { "templates": ["product"] },
+  "stylesheet": "storerx.css",
+  "settings": [
+    { "type": "product", "id": "product", "label": "t:settings.product", "autofill": true },
+    { "type": "text", "id": "heading", "label": "t:settings.heading", "info": "t:blocks.faq.heading_info" },
+    { "type": "checkbox", "id": "open_first", "label": "t:blocks.faq.open_first", "default": false }
+  ]
+}
+{% endschema %}

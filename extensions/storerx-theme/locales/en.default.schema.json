@@ -1,0 +1,54 @@
+{
+  "settings": {
+    "product": "Product",
+    "heading": "Heading"
+  },
+  "blocks": {
+    "faq": {
+      "name": "StoreRx FAQ",
+      "heading_info": "Leave blank to use \"Frequently asked questions\".",
+      "open_first": "Open the first question"
+    },
+    "trust_badges": {
+      "name": "StoreRx trust badges",
+      "icon_color": "Icon color",
+      "badge_1": "Badge 1",
+      "badge_2": "Badge 2",
+      "badge_3": "Badge 3",
+      "badge_4": "Badge 4",
+      "icon": "Icon",
+      "text": "Text",
+      "text_info": "Leave blank to use the default wording for the icon.",
+      "icons": {
+        "shipping": "Shipping",
+        "returns": "Returns",
+        "secure": "Secure checkout",
+        "support": "Support",
+        "guarantee": "Guarantee",
+        "none": "Hidden"
+      }
+    },
+    "cross_sells": {
+      "name": "StoreRx cross-sells",
+      "heading_info": "Leave blank to use \"You may also like\".",
+      "limit": "Products to show"
+    },
+    "shipping_bar": {
+      "name": "StoreRx shipping bar",
+      "threshold": "Free shipping threshold",
+      "threshold_info": "In your store's currency. Converted automatically for other currencies.",
+      "show_when_empty": "Show when the cart is empty",
+      "position": "Position",
+      "positions": {
+        "bottom": "Bottom of screen",
+        "top": "Top of screen"
+      },
+      "bar_color": "Progress color",
+      "display": "Show on",
+      "displays": {
+        "all": "Every page",
+        "cart": "Cart page only"
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{%- liquid
+  assign related = block.settings.product.metafields.storerx.crosssells.value
+  assign heading = block.settings.heading
+  if heading == blank
+    assign heading = 'related_products.heading' | t
+  endif
+  assign shown = 0
+-%}
+
+{%- capture cards -%}
+  {%- for item in related -%}
+    {%- liquid
+      unless item.available
+        continue
+      endunless
+      if shown >= block.settings.limit
+        break
+      endif
+      assign shown = shown | plus: 1
+      assign image_alt = item.featured_image.alt | default: item.title
+    -%}
+    <li class="storerx-related-products__card">
+      <a class="storerx-related-products__link" href="{{ item.url }}">
+        {%- if item.featured_image -%}
+          {{
+            item.featured_image
+            | image_url: width: 480
+            | image_tag:
+              loading: 'lazy',
+              widths: '240, 360, 480',
+              sizes: '(min-width: 750px) 25vw, 50vw',
+              alt: image_alt,
+              class: 'storerx-related-products__image'
+          }}
+        {%- endif -%}
+        <span class="storerx-related-products__title">{{ item.title | escape }}</span>
+      </a>
+      <span class="storerx-related-products__price">
+        {%- if item.compare_at_price > item.price -%}
+          <span class="storerx-visually-hidden">{{ 'related_products.sale_price' | t }}</span>
+          {{ item.price | money }}
+          <span class="storerx-visually-hidden">{{ 'related_products.regular_price' | t }}</span>
+          <s>{{ item.compare_at_price | money }}</s>
+        {%- else -%}
+          {{ item.price | money }}
+        {%- endif -%}
+      </span>
+    </li>
+  {%- endfor -%}
+{%- endcapture -%}
+
+{%- if shown > 0 -%}
+  <section class="storerx storerx-related-products" {{ block.shopify_attributes }}>
+    <h2 class="storerx-related-products__heading">{{ heading | escape }}</h2>
+    <ul class="storerx-related-products__list" role="list">
+      {{ cards }}
+    </ul>
+  </section>
+{%- elsif request.design_mode -%}
+  <div class="storerx storerx-placeholder" {{ block.shopify_attributes }}>
+    {{ 'related_products.placeholder' | t }}
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:blocks.cross_sells.name",
+  "target": "section",
+  "enabled_on": { "templates": ["product"] },
+  "stylesheet": "storerx.css",
+  "settings": [
+    { "type": "product", "id": "product", "label": "t:settings.product", "autofill": true },
+    { "type": "text", "id": "heading", "label": "t:settings.heading", "info": "t:blocks.cross_sells.heading_info" },
+    { "type": "range", "id": "limit", "label": "t:blocks.cross_sells.limit", "min": 2, "max": 8, "step": 1, "default": 4 }
+  ]
+}
+{% endschema %}

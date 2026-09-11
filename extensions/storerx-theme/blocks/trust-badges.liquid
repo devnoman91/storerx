@@ -1,0 +1,109 @@
+{%- liquid
+  assign badge_count = 0
+-%}
+
+{%- capture badges -%}
+  {%- for i in (1..4) -%}
+    {%- liquid
+      assign icon_key = 'badge_' | append: i | append: '_icon'
+      assign text_key = 'badge_' | append: i | append: '_text'
+      assign icon = block.settings[icon_key]
+      if icon == blank or icon == 'none'
+        continue
+      endif
+      assign label = block.settings[text_key]
+      if label == blank
+        case icon
+          when 'shipping'
+            assign label = 'trust_badges.shipping' | t
+          when 'returns'
+            assign label = 'trust_badges.returns' | t
+          when 'secure'
+            assign label = 'trust_badges.secure' | t
+          when 'support'
+            assign label = 'trust_badges.support' | t
+          else
+            assign label = 'trust_badges.guarantee' | t
+        endcase
+      endif
+      assign badge_count = badge_count | plus: 1
+    -%}
+    <li class="storerx-trust-badges__item">
+      {%- render 'trust-badge-icon', icon: icon -%}
+      <span>{{ label | escape }}</span>
+    </li>
+  {%- endfor -%}
+{%- endcapture -%}
+
+{%- if badge_count > 0 -%}
+  <ul
+    class="storerx storerx-trust-badges"
+    style="--storerx-badge-color: {{ block.settings.icon_color }}"
+    {{ block.shopify_attributes }}
+  >
+    {{ badges }}
+  </ul>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:blocks.trust_badges.name",
+  "target": "section",
+  "stylesheet": "storerx.css",
+  "settings": [
+    { "type": "color", "id": "icon_color", "label": "t:blocks.trust_badges.icon_color", "default": "#1f2937" },
+    { "type": "header", "content": "t:blocks.trust_badges.badge_1" },
+    {
+      "type": "select", "id": "badge_1_icon", "label": "t:blocks.trust_badges.icon", "default": "shipping",
+      "options": [
+        { "value": "shipping", "label": "t:blocks.trust_badges.icons.shipping" },
+        { "value": "returns", "label": "t:blocks.trust_badges.icons.returns" },
+        { "value": "secure", "label": "t:blocks.trust_badges.icons.secure" },
+        { "value": "support", "label": "t:blocks.trust_badges.icons.support" },
+        { "value": "guarantee", "label": "t:blocks.trust_badges.icons.guarantee" },
+        { "value": "none", "label": "t:blocks.trust_badges.icons.none" }
+      ]
+    },
+    { "type": "text", "id": "badge_1_text", "label": "t:blocks.trust_badges.text", "info": "t:blocks.trust_badges.text_info" },
+    { "type": "header", "content": "t:blocks.trust_badges.badge_2" },
+    {
+      "type": "select", "id": "badge_2_icon", "label": "t:blocks.trust_badges.icon", "default": "returns",
+      "options": [
+        { "value": "shipping", "label": "t:blocks.trust_badges.icons.shipping" },
+        { "value": "returns", "label": "t:blocks.trust_badges.icons.returns" },
+        { "value": "secure", "label": "t:blocks.trust_badges.icons.secure" },
+        { "value": "support", "label": "t:blocks.trust_badges.icons.support" },
+        { "value": "guarantee", "label": "t:blocks.trust_badges.icons.guarantee" },
+        { "value": "none", "label": "t:blocks.trust_badges.icons.none" }
+      ]
+    },
+    { "type": "text", "id": "badge_2_text", "label": "t:blocks.trust_badges.text", "info": "t:blocks.trust_badges.text_info" },
+    { "type": "header", "content": "t:blocks.trust_badges.badge_3" },
+    {
+      "type": "select", "id": "badge_3_icon", "label": "t:blocks.trust_badges.icon", "default": "secure",
+      "options": [
+        { "value": "shipping", "label": "t:blocks.trust_badges.icons.shipping" },
+        { "value": "returns", "label": "t:blocks.trust_badges.icons.returns" },
+        { "value": "secure", "label": "t:blocks.trust_badges.icons.secure" },
+        { "value": "support", "label": "t:blocks.trust_badges.icons.support" },
+        { "value": "guarantee", "label": "t:blocks.trust_badges.icons.guarantee" },
+        { "value": "none", "label": "t:blocks.trust_badges.icons.none" }
+      ]
+    },
+    { "type": "text", "id": "badge_3_text", "label": "t:blocks.trust_badges.text", "info": "t:blocks.trust_badges.text_info" },
+    { "type": "header", "content": "t:blocks.trust_badges.badge_4" },
+    {
+      "type": "select", "id": "badge_4_icon", "label": "t:blocks.trust_badges.icon", "default": "none",
+      "options": [
+        { "value": "shipping", "label": "t:blocks.trust_badges.icons.shipping" },
+        { "value": "returns", "label": "t:blocks.trust_badges.icons.returns" },
+        { "value": "secure", "label": "t:blocks.trust_badges.icons.secure" },
+        { "value": "support", "label": "t:blocks.trust_badges.icons.support" },
+        { "value": "guarantee", "label": "t:blocks.trust_badges.icons.guarantee" },
+        { "value": "none", "label": "t:blocks.trust_badges.icons.none" }
+      ]
+    },
+    { "type": "text", "id": "badge_4_text", "label": "t:blocks.trust_badges.text", "info": "t:blocks.trust_badges.text_info" }
+  ]
+}
+{% endschema %}

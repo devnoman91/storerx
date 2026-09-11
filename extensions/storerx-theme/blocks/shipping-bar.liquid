@@ -1,0 +1,84 @@
+{%- liquid
+  assign threshold = block.settings.threshold | times: 100 | round
+  assign total = cart.total_price
+  assign currency_match = false
+  if cart.currency.iso_code == shop.currency
+    assign currency_match = true
+  endif
+  assign remaining = threshold | minus: total
+  assign threshold_money = threshold | money
+  assign remaining_money = remaining | money
+  assign progress_value = total | at_most: threshold
+  assign hidden = false
+  unless currency_match
+    assign hidden = true
+  endunless
+  if total == 0
+    unless block.settings.show_when_empty
+      assign hidden = true
+    endunless
+  endif
+-%}
+
+{%- liquid
+  assign on_this_page = true
+  if block.settings.display == 'cart' and template.name != 'cart'
+    assign on_this_page = false
+  endif
+-%}
+
+{%- if on_this_page -%}
+<div
+  class="storerx storerx-shipping-bar storerx-shipping-bar--{{ block.settings.position }}"
+  style="--storerx-bar-color: {{ block.settings.bar_color }}"
+  role="status"
+  data-threshold="{{ threshold }}"
+  data-shop-currency="{{ shop.currency }}"
+  data-currency-match="{{ currency_match }}"
+  data-show-when-empty="{{ block.settings.show_when_empty }}"
+  data-msg-remaining="{{ 'shipping_bar.remaining' | t: amount: '[amount]' | escape }}"
+  data-msg-empty="{{ 'shipping_bar.empty' | t: amount: '[amount]' | escape }}"
+  data-msg-reached="{{ 'shipping_bar.reached' | t | escape }}"
+  {% if hidden %}hidden{% endif %}
+>
+  <p class="storerx-shipping-bar__message" data-storerx-message>
+    {%- if total >= threshold -%}
+      {{ 'shipping_bar.reached' | t }}
+    {%- elsif total == 0 -%}
+      {{ 'shipping_bar.empty' | t: amount: threshold_money }}
+    {%- else -%}
+      {{ 'shipping_bar.remaining' | t: amount: remaining_money }}
+    {%- endif -%}
+  </p>
+  <progress class="storerx-shipping-bar__progress" max="{{ threshold | at_least: 1 }}" value="{{ progress_value }}" aria-hidden="true"></progress>
+  <button type="button" class="storerx-shipping-bar__close" data-storerx-close aria-label="{{ 'shipping_bar.close' | t | escape }}">&times;</button>
+</div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:blocks.shipping_bar.name",
+  "target": "body",
+  "stylesheet": "storerx.css",
+  "javascript": "shipping-bar.js",
+  "settings": [
+    { "type": "number", "id": "threshold", "label": "t:blocks.shipping_bar.threshold", "info": "t:blocks.shipping_bar.threshold_info", "default": 50 },
+    {
+      "type": "select", "id": "display", "label": "t:blocks.shipping_bar.display", "default": "all",
+      "options": [
+        { "value": "all", "label": "t:blocks.shipping_bar.displays.all" },
+        { "value": "cart", "label": "t:blocks.shipping_bar.displays.cart" }
+      ]
+    },
+    { "type": "checkbox", "id": "show_when_empty", "label": "t:blocks.shipping_bar.show_when_empty", "default": true },
+    {
+      "type": "select", "id": "position", "label": "t:blocks.shipping_bar.position", "default": "bottom",
+      "options": [
+        { "value": "bottom", "label": "t:blocks.shipping_bar.positions.bottom" },
+        { "value": "top", "label": "t:blocks.shipping_bar.positions.top" }
+      ]
+    },
+    { "type": "color", "id": "bar_color", "label": "t:blocks.shipping_bar.bar_color", "default": "#1a7f37" }
+  ]
+}
+{% endschema %}
