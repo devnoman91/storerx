@@ -5,9 +5,9 @@ Paste the prompt first, then attach/paste the full DESIGN.md content where it sa
 
 ---
 
-## A. Prompt for Claude (design / mockups)
+## A. Prompt for an AI design tool (design / mockups)
 
-Use in claude.ai or Claude Code when you want visual mockups of the screens.
+Use in an AI design tool when you want visual mockups of the screens.
 
 ```
 You are designing the UI for "StoreRx", a Shopify embedded admin app

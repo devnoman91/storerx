@@ -1,6 +1,6 @@
 # StoreRx — Design, Wireframes & Branding
 
-This file is the design source of truth for Claude when building any UI screen.
+This file is the design source of truth when building any UI screen.
 Read together with `docs/FEATURES.md`. All screens are built with **Polaris web components**
 (`s-*` tags, globally available, no imports) inside the embedded app.
 

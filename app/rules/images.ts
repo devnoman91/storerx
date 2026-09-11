@@ -6,7 +6,7 @@
  * the dashboard can group them into one prescription with a thumbnail list.
  *
  * Never recommend converting formats: Shopify's CDN already serves WebP/AVIF
- * and resized renditions (CLAUDE.md rule 7).
+ * and resized renditions (project rule 7).
  */
 
 import type { CatalogProduct } from "../collectors/images";

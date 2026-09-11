@@ -73,7 +73,7 @@ describe("perf rules", () => {
   });
 
   it("never recommends re-encoding images (Shopify CDN handles format)", () => {
-    // CLAUDE.md rule 7 — a WebP recommendation is always wrong here.
+    // Project rule 7 — a WebP recommendation is always wrong here.
     const text = run(fixture("slow-app-heavy"))
       .map((f) => `${f.title} ${f.evidence?.value ?? ""}`)
       .join(" ")
@@ -82,7 +82,7 @@ describe("perf rules", () => {
   });
 
   it("quotes no predicted conversion numbers", () => {
-    // CLAUDE.md rule 3 — impact is High/Medium/Low, never "+12% conversion".
+    // Project rule 3 — impact is High/Medium/Low, never "+12% conversion".
     const text = run(fixture("slow-app-heavy"))
       .map((f) => `${f.title} ${f.evidence?.value ?? ""}`)
       .join(" ");
