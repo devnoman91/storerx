@@ -11,7 +11,10 @@ primary_region = "sjc"
 # Two process groups from one image. Only `app` serves HTTP; the worker polls
 # the Audit table (see app/queue.server.ts).
 [processes]
-  app = "npm run docker-start"
+  # Plain `start`: the Prisma client is generated in the image and migrations
+  # run once as the release_command, so re-running them on every boot only
+  # added ~17s of cold start (measured in the deploy logs).
+  app = "npm run start"
   worker = "npm run worker:prod"
 
 [env]
@@ -24,7 +27,10 @@ primary_region = "sjc"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep one app machine awake. Shopify gives webhooks a 1s connect and 5s
+  # total timeout, which a machine waking from stop cannot meet — and the
+  # mandatory compliance webhooks are checked during App Store review.
+  min_machines_running = 1
   processes = ["app"]
 
   [http_service.concurrency]
