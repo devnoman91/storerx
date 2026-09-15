@@ -68,9 +68,11 @@ model Shop {
   updatedAt DateTime @updatedAt
 
   // Relations
-  audits  Audit[]
-  fixes   Fix[]
-  aiUsage AiUsage[]
+  audits           Audit[]
+  fixes            Fix[]
+  aiUsage          AiUsage[]
+  explanationCache ExplanationCache[]
+  issues           Issue[]
 }
 
 // Audit run
@@ -88,6 +90,14 @@ model Audit {
    * Claim count, so a repeatedly-crashing audit stops instead of looping.
    */
   attempts    Int     @default(0)
+
+  // What this scan covered. `scope` is the area the merchant asked for;
+  // `evaluatedRules` lists rules that ran to completion, so only issues from
+  // those rules can be opened or resolved by this scan.
+  scope          String   @default("full")
+  evaluatedRules String[] @default([])
+  newCount       Int      @default(0)
+  resolvedCount  Int      @default(0)
 
   // Overall scores (0-100)
   overallScore      Int?
@@ -142,6 +152,12 @@ model Finding {
 
   // CDN URL of the affected image, for thumbnails on image findings.
   imageUrl String?
+
+  // Stable identity of the problem across scans: rule + page/product/image.
+  // Excludes titles and measured values, which change between scans.
+  fingerprint String?
+  isNew       Boolean   @default(false)
+  firstSeenAt DateTime?
 
   // Evidence
   evidenceType  String? // selector, text, screenshot
@@ -244,4 +260,59 @@ model AiUsage {
 model WorkerHeartbeat {
   id         String   @id // hostname:pid
   lastSeenAt DateTime
+}
+
+// AI explanation per shop and rule, reused across scans so an unchanged issue
+// is never paid for twice. `contextHash` covers the prompt version and brand
+// voice; when either changes the entry is regenerated.
+model ExplanationCache {
+  id             String   @id @default(cuid())
+  shopId         String
+  shop           Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  ruleId         String
+  contextHash    String
+  explanation    String
+  recommendation String
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shopId, ruleId])
+}
+
+// The store's current issues, across every area. Findings are per-scan
+// snapshots; an Issue is the living record a scan opens, keeps or resolves.
+// Partial scans only touch issues from the rules they ran.
+model Issue {
+  id          String @id @default(cuid())
+  shopId      String
+  shop        Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  fingerprint String
+
+  ruleId         String
+  pageType       String
+  severity       String
+  title          String
+  explanation    String?
+  recommendation String?
+  evidenceType   String?
+  evidenceValue  String?
+  pageUrl        String?
+  targetId       String?
+  targetTitle    String?
+  imageUrl       String?
+  fixableByAI    Boolean @default(false)
+  fixType        String?
+
+  status          String    @default("open") // open, resolved
+  firstSeenAt     DateTime
+  lastSeenAt      DateTime
+  lastSeenAuditId String
+  // The scan that opened (or reopened) this issue, and whether it counted as
+  // new there. "New" is shown only until a later scan sees the issue again.
+  openedAuditId   String
+  openedAsNew     Boolean   @default(false)
+  resolvedAt      DateTime?
+  resolvedAuditId String?
+
+  @@unique([shopId, fingerprint])
+  @@index([shopId, status])
 }

@@ -52,6 +52,38 @@ export function runRules(page: PageType, ctx: RuleContext): Finding[] {
   return findings;
 }
 
+export interface RuleRun {
+  findings: Finding[];
+  /**
+   * Rules that ran to completion. A rule that threw did not actually check
+   * the page, so it must not count as having re-checked an open issue.
+   */
+  evaluated: string[];
+}
+
+/** Run the rules for a page, optionally only those a scan scope includes. */
+export function runRulesDetailed(
+  page: PageType,
+  ctx: RuleContext,
+  include: (ruleId: string) => boolean = () => true,
+): RuleRun {
+  const findings: Finding[] = [];
+  const evaluated: string[] = [];
+
+  for (const rule of getRulesForPage(page)) {
+    if (!include(rule.id)) continue;
+    try {
+      const finding = rule.check(ctx);
+      evaluated.push(rule.id);
+      if (finding) findings.push(finding);
+    } catch (error) {
+      console.error(`Rule ${rule.id} failed:`, error);
+    }
+  }
+
+  return { findings, evaluated };
+}
+
 // Run rules and return summary
 export interface RuleSummary {
   page: PageType;
@@ -86,7 +118,13 @@ export { collectionRules } from "./collection";
 export { productRules } from "./product";
 export { cartRules } from "./cart";
 export { checkoutRules } from "./checkout";
-export { imageRules, checkCatalogImages, checkProductImages, checkDuplicateImages } from "./images";
+export {
+  imageRules,
+  CATALOG_IMAGE_RULE_IDS,
+  checkCatalogImages,
+  checkProductImages,
+  checkDuplicateImages,
+} from "./images";
 export { perfRules } from "./perf";
 
 // Re-export types

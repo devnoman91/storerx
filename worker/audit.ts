@@ -1,41 +1,49 @@
 /**
- * Audit Worker (BullMQ)
+ * Scan runner.
  *
- * Background job that runs store audits.
- * Never runs inside HTTP request handlers.
+ * Runs one scan scope (app/scans/scopes.ts): fetches only what that scope
+ * needs, runs only its rules, and reports exactly which rules ran and which
+ * storefront pages were fetched — the issue list is only updated for what was
+ * actually checked. Never runs inside HTTP request handlers.
  *
- * Pages sampled per audit (not full crawl):
- * - Homepage
- * - 3 collections (largest by product count)
- * - 5 products (top sellers from last 30 days; fallback: newest)
- * - Cart
- * - Checkout settings (Admin API, not crawled)
+ * Pages are sampled, not crawled: the homepage, the 3 largest collections and
+ * 5 products.
  */
 
-import { checkCatalogImages, runRulesWithSummary, type Finding, type PageType, type ShopData } from "../app/rules";
+import {
+  CATALOG_IMAGE_RULE_IDS,
+  checkCatalogImages,
+  runRulesDetailed,
+  type Finding,
+  type PageType,
+  type ShopData,
+} from "../app/rules";
 import type { CatalogImages } from "../app/collectors/images";
+import { SCAN_SCOPES, type ScanScope, type StorefrontArea } from "../app/scans/scopes";
 import { calculateScore, calculateStoreHealth } from "../app/scoring";
-import { collectStorefrontPage, buildAuditPageList, closeBrowser } from "../app/collectors/storefront";
+import { buildAuditPageList, closeBrowser, collectStorefrontPage } from "../app/collectors/storefront";
 import { runLighthouseAudit, type LighthouseResult } from "../app/collectors/lighthouse";
 
 export interface AuditJobData {
   shopDomain: string;
   auditId: string;
+  scope: ScanScope;
+}
+
+export interface AuditScores {
+  overall: number;
+  conversion: number;
+  ux: number;
+  /** null when Lighthouse did not run. */
+  performance: number | null;
+  seo: number;
+  productPages: number;
 }
 
 export interface AuditJobResult {
-  shopDomain: string;
-  auditId: string;
   findings: Finding[];
-  scores: {
-    overall: number;
-    conversion: number;
-    ux: number;
-    /** null when Lighthouse did not run. */
-    performance: number | null;
-    seo: number;
-    productPages: number;
-  };
+  /** Store-wide scores. Only a full scan sees enough of the store to score it. */
+  scores: AuditScores | null;
   pageResults: Array<{
     url: string;
     pageType: PageType;
@@ -44,6 +52,10 @@ export interface AuditJobResult {
     perfScore: number | null;
     findings: Finding[];
   }>;
+  /** Rules that ran to completion — the only rules whose issues this scan can resolve. */
+  evaluatedRules: string[];
+  /** Storefront pages fetched in this scan. */
+  scannedUrls: string[];
   completedAt: Date;
 }
 
@@ -53,21 +65,6 @@ export interface AuditProgress {
   current: number;
   total: number;
   percent: number;
-}
-
-const AUDIT_STEPS = [
-  { step: "Collecting store data", weight: 5 },
-  { step: "Scanning homepage", weight: 15 },
-  { step: "Scanning collections", weight: 15 },
-  { step: "Scanning product pages", weight: 30 },
-  { step: "Scanning product images", weight: 10 },
-  { step: "Running performance audit", weight: 15 },
-  { step: "Analyzing results", weight: 10 },
-];
-
-/** Record which storefront URL a page's findings were detected on. */
-function atPage(findings: Finding[], pageUrl: string): Finding[] {
-  return findings.map((finding) => ({ ...finding, pageUrl }));
 }
 
 export interface AuditJobOptions {
@@ -80,218 +77,169 @@ export interface AuditJobOptions {
   collectImages?: () => Promise<CatalogImages>;
 }
 
+const AREA_STEP: Record<StorefrontArea, string> = {
+  homepage: "Scanning homepage",
+  collection: "Scanning collections",
+  product: "Scanning product pages",
+};
+
+const AREA_ORDER: StorefrontArea[] = ["homepage", "collection", "product"];
+
+/** Record which storefront URL a page's findings were detected on. */
+function atPage(findings: Finding[], pageUrl: string): Finding[] {
+  return findings.map((finding) => ({ ...finding, pageUrl }));
+}
+
 export async function processAuditJob(
   data: AuditJobData,
   shopData: ShopData,
   onProgress?: (progress: AuditProgress) => void,
   options: AuditJobOptions = {},
 ): Promise<AuditJobResult> {
-  const { shopDomain, auditId } = data;
+  const { shopDomain, scope } = data;
+  const spec = SCAN_SCOPES[scope];
+  const include = spec.includesRule;
   const collectorOptions = { domain: shopDomain, cookie: options.storefrontCookie };
-  const allFindings: Finding[] = [];
-  const pageResults: AuditJobResult["pageResults"] = [];
+  const homepageUrl = `https://${shopDomain}`;
 
-  const updateProgress = (stepIndex: number, substep?: string) => {
-    const step = AUDIT_STEPS[stepIndex];
-    const completedWeight = AUDIT_STEPS.slice(0, stepIndex).reduce((s, t) => s + t.weight, 0);
+  const findings: Finding[] = [];
+  const pageResults: AuditJobResult["pageResults"] = [];
+  const evaluated = new Set<string>();
+  const scannedUrls: string[] = [];
+
+  // Progress steps follow the scope, so a homepage-only scan does not sit at
+  // 20% while skipping steps it never runs.
+  const areas = AREA_ORDER.filter((area) => spec.pages.includes(area));
+  const steps = [
+    ...areas.map((area) => AREA_STEP[area]),
+    ...(spec.catalogImages && options.collectImages ? ["Scanning product images"] : []),
+    ...(spec.performance ? ["Running performance audit"] : []),
+    ...(spec.checkout ? ["Checking checkout settings"] : []),
+    "Analyzing results",
+  ];
+  const progress = (step: string, detail?: string) => {
+    const index = Math.max(steps.indexOf(step), 0);
     onProgress?.({
       status: "running",
-      currentStep: substep || step.step,
-      current: stepIndex + 1,
-      total: AUDIT_STEPS.length,
-      percent: Math.round(completedWeight),
+      currentStep: detail ?? step,
+      current: index + 1,
+      total: steps.length,
+      percent: Math.round((index / steps.length) * 100),
     });
   };
 
   try {
-    // Step 1: Build page list
-    updateProgress(0);
-    const pages = buildAuditPageList(
-      shopDomain,
-      shopData.collections,
-      shopData.products
-    );
+    // Storefront pages for the requested areas.
+    const sampled = buildAuditPageList(shopDomain, shopData.collections, shopData.products);
+    for (const area of areas) {
+      const urls =
+        area === "homepage" ? [homepageUrl] : sampled.filter((page) => page.type === area).map((page) => page.url);
 
+      for (let i = 0; i < urls.length; i++) {
+        progress(AREA_STEP[area], urls.length > 1 ? `${AREA_STEP[area]} ${i + 1}/${urls.length}` : undefined);
+        const page = await collectStorefrontPage(urls[i], area, collectorOptions);
+        const run = runRulesDetailed(area, { html: page.html, shopData }, include);
 
-    // Step 2: Scan homepage
-    updateProgress(1);
-    const homepageUrl = `https://${shopDomain}`;
-    const homepage = await collectStorefrontPage(homepageUrl, "homepage", collectorOptions);
-
-    const homepageRules = runRulesWithSummary("homepage", {
-      html: homepage.html,
-      shopData,
-    });
-
-    const homepageFindings = atPage(homepageRules.findings, homepageUrl);
-    allFindings.push(...homepageFindings);
-    pageResults.push({
-      url: homepageUrl,
-      pageType: "homepage",
-      croScore: calculateScore(homepageRules.findings),
-      perfScore: 0, // Set after Lighthouse
-      findings: homepageFindings,
-    });
-
-    // Step 3: Scan collections
-    updateProgress(2);
-    const collectionPages = pages.filter((p) => p.type === "collection");
-    for (let i = 0; i < collectionPages.length; i++) {
-      updateProgress(2, `Scanning collection ${i + 1}/${collectionPages.length}`);
-      const page = collectionPages[i];
-
-      const collPage = await collectStorefrontPage(page.url, "collection", collectorOptions);
-
-      const collRules = runRulesWithSummary("collection", {
-        html: collPage.html,
-        shopData,
-      });
-
-      const collFindings = atPage(collRules.findings, page.url);
-      allFindings.push(...collFindings);
-      pageResults.push({
-        url: page.url,
-        pageType: "collection",
-        croScore: calculateScore(collRules.findings),
-        perfScore: 0,
-        findings: collFindings,
-      });
+        scannedUrls.push(urls[i]);
+        run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
+        const pageFindings = atPage(run.findings, urls[i]);
+        findings.push(...pageFindings);
+        pageResults.push({
+          url: urls[i],
+          pageType: area,
+          croScore: calculateScore(run.findings),
+          perfScore: null,
+          findings: pageFindings,
+        });
+      }
     }
 
-    // Step 4: Scan product pages
-    updateProgress(3);
-    const productPages = pages.filter((p) => p.type === "product");
-    for (let i = 0; i < productPages.length; i++) {
-      updateProgress(3, `Scanning product ${i + 1}/${productPages.length}`);
-      const page = productPages[i];
-
-      const prodPage = await collectStorefrontPage(page.url, "product", collectorOptions);
-
-      const prodRules = runRulesWithSummary("product", {
-        html: prodPage.html,
-        shopData,
-      });
-
-      const prodFindings = atPage(prodRules.findings, page.url);
-      allFindings.push(...prodFindings);
-      pageResults.push({
-        url: page.url,
-        pageType: "product",
-        croScore: calculateScore(prodRules.findings),
-        perfScore: 0,
-        findings: prodFindings,
-      });
-    }
-
-    // Clean up browser
-    await closeBrowser();
-
-    // Step 5: Catalog image checks. Admin API metadata only, so it covers the
-    // whole catalog (up to the scan cap), not just the sampled product pages.
-    if (options.collectImages) {
-      updateProgress(4);
+    // Catalog images: Admin API metadata only, covering the whole catalog up
+    // to the scan cap rather than just the sampled product pages.
+    if (spec.catalogImages && options.collectImages) {
+      progress("Scanning product images");
       const catalog = await options.collectImages();
-      const imageFindings = checkCatalogImages(catalog.products);
-      allFindings.push(...imageFindings);
-      const scannedImages = catalog.products.reduce((n, p) => n + p.images.length, 0);
-      updateProgress(
-        4,
-        `Checked ${scannedImages} images across ${catalog.products.length} of ${catalog.totalProducts} products`,
+      findings.push(...checkCatalogImages(catalog.products).filter((f) => include(f.ruleId)));
+      CATALOG_IMAGE_RULE_IDS.filter(include).forEach((ruleId) => evaluated.add(ruleId));
+      const images = catalog.products.reduce((n, p) => n + p.images.length, 0);
+      progress(
+        "Scanning product images",
+        `Checked ${images} images across ${catalog.products.length} of ${catalog.totalProducts} products`,
       );
     }
 
-    // Step 5: Run Lighthouse on homepage.
-    // Both strategies, because the Performance score is weighted mobile 70 /
-    // desktop 30 (FEATURES.md §3). Two PSI calls — set PAGESPEED_API_KEY to
-    // avoid the unkeyed rate limit.
-    updateProgress(5);
-    const hasPsiKey = Boolean(process.env.PAGESPEED_API_KEY);
-    // PageSpeed runs on Google's servers and cannot use our storefront login,
-    // so on a password-protected store it would only ever measure the lock
-    // screen. Skip it: performance is unmeasured, not falsely perfect.
-    const lighthouseResult: LighthouseResult = shopData.passwordProtected
-      ? { combinedScore: null }
-      : await runLighthouseAudit({
+    // Performance (full scan only). PageSpeed runs on Google's servers and
+    // cannot use our storefront login, so on a password-protected store it
+    // would only measure the lock screen — leave performance unmeasured.
+    let lighthouse: LighthouseResult = { combinedScore: null };
+    if (spec.performance) {
+      progress("Running performance audit");
+      if (!shopData.passwordProtected) {
+        lighthouse = await runLighthouseAudit({
           url: homepageUrl,
           mobile: true,
-          // Desktop doubles the PSI calls, which trips the unkeyed quota. Without
-          // a key the score is mobile-only rather than the §3 70/30 weighting.
-          desktop: hasPsiKey,
+          // Desktop doubles the PSI calls; without a key the unkeyed quota trips.
+          desktop: Boolean(process.env.PAGESPEED_API_KEY),
         });
-    if (lighthouseResult.combinedScore === null) {
-      console.warn(
-        shopData.passwordProtected
-          ? "[audit] storefront is password-protected — PageSpeed skipped, performance unmeasured"
-          : "[audit] Lighthouse unavailable — performance left unmeasured",
-      );
-    }
-    const homepageIdx = pageResults.findIndex((p) => p.pageType === "homepage");
-    if (homepageIdx >= 0) {
-      pageResults[homepageIdx].perfScore = lighthouseResult.combinedScore;
-    }
-
-    // Performance findings come from the mobile run — that is what the score
-    // is weighted toward, and what most storefront traffic is.
-    if (lighthouseResult.mobile) {
-      updateProgress(5, "Analyzing performance");
-      const perfFindings = runRulesWithSummary("perf", {
-        html: "",
-        shopData,
-        lighthouse: lighthouseResult.mobile,
-      });
-      allFindings.push(...perfFindings.findings);
-      pageResults.push({
-        url: homepageUrl,
-        pageType: "perf",
-        croScore: 0,
-        perfScore: lighthouseResult.combinedScore,
-        findings: perfFindings.findings,
-      });
+      }
+      if (lighthouse.mobile) {
+        const run = runRulesDetailed("perf", { html: "", shopData, lighthouse: lighthouse.mobile }, include);
+        run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
+        findings.push(...run.findings);
+        pageResults.push({
+          url: homepageUrl,
+          pageType: "perf",
+          croScore: 0,
+          perfScore: lighthouse.combinedScore,
+          findings: run.findings,
+        });
+        const home = pageResults.find((p) => p.pageType === "homepage");
+        if (home) home.perfScore = lighthouse.combinedScore;
+      } else {
+        console.warn(
+          shopData.passwordProtected
+            ? "[audit] storefront is password-protected — PageSpeed skipped, performance unmeasured"
+            : "[audit] Lighthouse unavailable — performance left unmeasured",
+        );
+      }
     }
 
-    // Step 6: Check checkout settings + calculate final scores
-    updateProgress(6);
-    const checkoutRules = runRulesWithSummary("checkout", {
-      html: "",
-      shopData,
-    });
-    allFindings.push(...checkoutRules.findings);
+    if (spec.checkout) {
+      progress("Checking checkout settings");
+      const run = runRulesDetailed("checkout", { html: "", shopData }, include);
+      run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
+      findings.push(...run.findings);
+    }
 
-    // Calculate overall scores. Performance comes from Lighthouse, not from
-    // the perf findings, so `overall` agrees with the score shown beside it.
-    const storeHealth = calculateStoreHealth(allFindings, {
-      performanceScore: lighthouseResult.combinedScore,
-    });
-    const performanceCategory = storeHealth.categories.find(
-      (c) => c.category === "performance",
-    );
-
+    progress("Analyzing results");
     return {
-      shopDomain,
-      auditId,
-      findings: allFindings,
-      scores: {
-        overall: storeHealth.overall,
-        conversion: storeHealth.categories.find((c) => c.category === "conversion")?.score || 0,
-        ux: storeHealth.categories.find((c) => c.category === "ux")?.score || 0,
-        // Stays null when Lighthouse did not run, so the UI can say "not
-        // measured" instead of showing a 0 the store did not earn.
-        performance: performanceCategory?.measured ? performanceCategory.score : null,
-        seo: storeHealth.categories.find((c) => c.category === "seo")?.score || 0,
-        productPages: storeHealth.categories.find((c) => c.category === "productPages")?.score || 0,
-      },
+      findings,
+      scores: scope === "full" ? scoreStore(findings, lighthouse) : null,
       pageResults,
+      evaluatedRules: [...evaluated],
+      scannedUrls,
       completedAt: new Date(),
     };
   } catch (error) {
-    await closeBrowser();
-    onProgress?.({
-      status: "failed",
-      currentStep: "Error",
-      current: 0,
-      total: AUDIT_STEPS.length,
-      percent: 0,
-    });
+    onProgress?.({ status: "failed", currentStep: "Error", current: 0, total: steps.length, percent: 0 });
     throw error;
+  } finally {
+    await closeBrowser();
   }
+}
+
+function scoreStore(findings: Finding[], lighthouse: LighthouseResult): AuditScores {
+  // Performance comes from Lighthouse, not the perf findings, so `overall`
+  // agrees with the performance score shown beside it.
+  const health = calculateStoreHealth(findings, { performanceScore: lighthouse.combinedScore });
+  const category = (name: string) => health.categories.find((c) => c.category === name);
+  const performance = category("performance");
+  return {
+    overall: health.overall,
+    conversion: category("conversion")?.score ?? 0,
+    ux: category("ux")?.score ?? 0,
+    performance: performance?.measured ? performance.score : null,
+    seo: category("seo")?.score ?? 0,
+    productPages: category("productPages")?.score ?? 0,
+  };
 }

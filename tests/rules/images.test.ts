@@ -9,7 +9,7 @@ import {
   checkProductImages,
 } from "../../app/rules/images";
 import type { Finding } from "../../app/rules/types";
-import { calculateStoreHealth, collapseCatalogFindings } from "../../app/scoring";
+import { calculateStoreHealth, collapseByRule } from "../../app/scoring";
 
 const catalog = JSON.parse(
   readFileSync(join(__dirname, "..", "fixtures", "images", "catalog.json"), "utf8"),
@@ -134,7 +134,7 @@ describe("scoring catalog findings", () => {
     expect(forty.totalIssues).toBe(1);
   });
 
-  it("leaves page rules uncollapsed", () => {
+  it("collapses a page rule that fires on several pages into one prescription", () => {
     const pageFindings: Finding[] = ["a", "b"].map((id) => ({
       ruleId: "prod.reviews.fold",
       page: "product",
@@ -143,6 +143,7 @@ describe("scoring catalog findings", () => {
       fixableByAI: false,
       pageUrl: `https://shop.myshopify.com/products/${id}`,
     }));
-    expect(collapseCatalogFindings(pageFindings, (f) => f.page)).toHaveLength(2);
+    expect(collapseByRule(pageFindings)).toHaveLength(1);
   });
+
 });

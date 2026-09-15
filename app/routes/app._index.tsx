@@ -6,6 +6,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
 import { isCatalogPage } from "../scoring";
+import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, type ScanScope } from "../scans/scopes";
 import {
   IMAGE_MAX_DIMENSION,
   IMAGE_MIN_DIMENSION,
@@ -15,6 +16,9 @@ import {
 
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
 type Severity = keyof typeof SEVERITY_RANK;
+
+/** How far back "recently fixed" looks. */
+const RECENTLY_FIXED_DAYS = 14;
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -35,7 +39,7 @@ const CATALOG_TITLES: Record<string, (n: number) => string> = {
   "img.duplicate": (n) => `${plural(n, "image looks", "images look")} like a duplicate upload`,
 };
 
-type FindingRow = {
+type IssueRow = {
   id: string;
   ruleId: string;
   pageType: string;
@@ -48,47 +52,83 @@ type FindingRow = {
   imageUrl: string | null;
   targetTitle: string | null;
   fixableByAI: boolean;
+  isNew: boolean;
 };
 
 /**
- * One row per prescription. Catalog rules (images) fire once per image or
- * product; showing them individually buries the list, so they collapse into
- * a single row that lists what is affected.
+ * One row per prescription: a rule that fired on several pages, products or
+ * images is one problem, listed with everything it affects. Scoring and scan
+ * issue counts use the same grouping (collapseByRule).
  */
-function toPrescriptions(findings: FindingRow[]): Issue[] {
-  const issues: Issue[] = [];
-  const grouped = new Map<string, Issue>();
+function toPrescriptions(rows: IssueRow[]): Issue[] {
+  const groups = new Map<string, IssueRow[]>();
+  for (const row of rows) {
+    const group = groups.get(row.ruleId);
+    if (group) group.push(row);
+    else groups.set(row.ruleId, [row]);
+  }
 
-  for (const f of findings) {
-    const affected = {
-      id: f.id,
-      title: f.targetTitle,
-      imageUrl: f.imageUrl,
-      pageUrl: f.pageUrl,
-      evidenceValue: f.evidenceValue,
+  return [...groups.values()].map((group) => {
+    const [first] = group;
+    const catalog = isCatalogPage(first.pageType);
+    const isNew = group.some((row) => row.isNew);
+
+    // A single occurrence on a page reads best as a plain row with its page.
+    if (group.length === 1 && !catalog) {
+      return { ...first, isNew, catalog, affected: null };
+    }
+
+    return {
+      ...first,
+      isNew,
+      catalog,
+      title: catalog ? CATALOG_TITLES[first.ruleId]?.(group.length) ?? first.title : first.title,
+      affected: group.map((row) => ({
+        id: row.id,
+        title: row.targetTitle,
+        imageUrl: row.imageUrl,
+        pageUrl: row.pageUrl,
+        evidenceValue: row.evidenceValue,
+        isNew: row.isNew,
+      })),
     };
-
-    if (!isCatalogPage(f.pageType)) {
-      issues.push({ ...f, affected: null });
-      continue;
-    }
-
-    const existing = grouped.get(f.ruleId);
-    if (existing) {
-      existing.affected!.push(affected);
-      continue;
-    }
-    const issue: Issue = { ...f, affected: [affected] };
-    grouped.set(f.ruleId, issue);
-    issues.push(issue);
-  }
-
-  for (const issue of grouped.values()) {
-    const n = issue.affected!.length;
-    issue.title = CATALOG_TITLES[issue.ruleId]?.(n) ?? `${issue.title} (${n})`;
-  }
-  return issues;
+  });
 }
+
+type FixedGroup = {
+  ruleId: string;
+  title: string;
+  severity: string;
+  items: Array<{ id: string; label: string }>;
+};
+
+function groupFixed(rows: Array<Omit<IssueRow, "isNew">>): FixedGroup[] {
+  const groups = new Map<string, { rows: typeof rows }>();
+  for (const row of rows) {
+    const group = groups.get(row.ruleId);
+    if (group) group.rows.push(row);
+    else groups.set(row.ruleId, { rows: [row] });
+  }
+  return [...groups.values()]
+    .map(({ rows: group }) => {
+      const [first] = group;
+      return {
+        ruleId: first.ruleId,
+        severity: first.severity,
+        title: isCatalogPage(first.pageType)
+          ? CATALOG_TITLES[first.ruleId]?.(group.length) ?? first.title
+          : first.title,
+        items: group.map((row) => ({
+          id: row.id,
+          label: row.targetTitle ?? pagePath(row.pageUrl) ?? "Store settings",
+        })),
+      };
+    })
+    .sort((a, b) => SEVERITY_RANK[a.severity as Severity] - SEVERITY_RANK[b.severity as Severity]);
+}
+
+const bySeverity = (a: { severity: string }, b: { severity: string }) =>
+  SEVERITY_RANK[a.severity as Severity] - SEVERITY_RANK[b.severity as Severity];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -98,60 +138,92 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!shop) {
     shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
+  const shopId = shop.id;
 
   // An audit whose worker died would otherwise block new scans forever.
-  await reapStaleAudits(shop.id);
+  await reapStaleAudits(shopId);
 
-  const runningAudit = await prisma.audit.findFirst({
-    where: { shopId: shop.id, status: { in: ["pending", "running"] } },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, status: true, progress: true, currentStep: true },
-  });
+  const since = new Date(Date.now() - RECENTLY_FIXED_DAYS * 24 * 60 * 60 * 1000);
+  const [openIssues, fixedIssues, inFlight, latestScan, lastByScope, failedScan, fixCount] = await Promise.all([
+    prisma.issue.findMany({ where: { shopId, status: "open" }, orderBy: { lastSeenAt: "desc" } }),
+    prisma.issue.findMany({
+      where: { shopId, status: "resolved", resolvedAt: { gte: since } },
+      orderBy: { resolvedAt: "desc" },
+    }),
+    prisma.audit.findMany({
+      where: { shopId, status: { in: ["pending", "running"] } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, status: true, progress: true, currentStep: true, scope: true },
+    }),
+    prisma.audit.findFirst({
+      where: { shopId, status: "completed" },
+      orderBy: { completedAt: "desc" },
+      select: { scope: true, completedAt: true, newCount: true, resolvedCount: true, createdAt: true },
+    }),
+    prisma.audit.groupBy({
+      by: ["scope"],
+      where: { shopId, status: "completed" },
+      _max: { completedAt: true },
+    }),
+    prisma.audit.findFirst({
+      where: { shopId, status: "failed" },
+      orderBy: { createdAt: "desc" },
+      select: { error: true, createdAt: true, scope: true },
+    }),
+    prisma.fix.count({ where: { shopId, status: "applied" } }),
+  ]);
 
-  const latestAudit = await prisma.audit.findFirst({
-    where: { shopId: shop.id, status: "completed" },
-    orderBy: { completedAt: "desc" },
-    include: {
-      findings: {
-        where: { status: "open" },
-        // severity is a string column, so sort by rank in code below.
-        orderBy: { createdAt: "desc" },
-      },
-    },
-  });
+  const rows: IssueRow[] = openIssues
+    .map((issue) => ({
+      ...issue,
+      // "New" until a later scan sees the issue again.
+      isNew: issue.openedAsNew && issue.openedAuditId === issue.lastSeenAuditId,
+    }))
+    .sort(bySeverity);
+  const prescriptions = toPrescriptions(rows);
 
-  const failedAudit = runningAudit
-    ? null
-    : await prisma.audit.findFirst({
-        where: { shopId: shop.id, status: "failed" },
-        orderBy: { createdAt: "desc" },
-        select: { error: true, createdAt: true },
-      });
-
-  const findings = toPrescriptions(
-    (latestAudit?.findings ?? [])
-      .slice()
-      .sort((a, b) => SEVERITY_RANK[a.severity as Severity] - SEVERITY_RANK[b.severity as Severity]),
-  );
-
-  const fixCount = await prisma.fix.count({
-    where: { shopId: shop.id, status: "applied" },
-  });
+  const running = inFlight.find((audit) => audit.status === "running") ?? inFlight[0] ?? null;
+  const lastScanned = new Map(lastByScope.map((row) => [row.scope, row._max.completedAt]));
+  const scopeLabel = (scope: string) => (isScanScope(scope) ? SCAN_SCOPES[scope].label : scope);
 
   return {
-    shopDomain,
-    hasAudit: !!latestAudit,
-    lastAuditDate: latestAudit?.completedAt?.toLocaleDateString() || null,
-    runningAudit,
+    hasScan: Boolean(latestScan),
+    latestScan: latestScan
+      ? {
+          label: scopeLabel(latestScan.scope),
+          date: (latestScan.completedAt ?? latestScan.createdAt).toLocaleString(),
+          newCount: latestScan.newCount,
+          resolvedCount: latestScan.resolvedCount,
+        }
+      : null,
+    runningAudit: running ? { ...running, label: scopeLabel(running.scope) } : null,
     // Only worth a query while something is waiting to be picked up.
-    workerAlive: runningAudit?.status === "pending" ? await isWorkerAlive() : true,
+    workerAlive: running?.status === "pending" ? await isWorkerAlive() : true,
     failedError:
-      failedAudit && (!latestAudit || failedAudit.createdAt > latestAudit.createdAt)
-        ? failedAudit.error
+      failedScan && (!latestScan || failedScan.createdAt > latestScan.createdAt)
+        ? `${scopeLabel(failedScan.scope)} scan: ${failedScan.error ?? "unknown error"}`
         : null,
-    critical: findings.filter((f) => f.severity === "high"),
-    improvements: findings.filter((f) => f.severity === "medium"),
-    minor: findings.filter((f) => f.severity === "low"),
+    areas: SCAN_SCOPE_ORDER.filter((scope) => scope !== "full").map((scope) => {
+      const spec = SCAN_SCOPES[scope];
+      const when = lastScanned.get(scope);
+      return {
+        scope,
+        label: spec.label,
+        description: spec.description,
+        lastScanned: when ? when.toLocaleString() : null,
+        openIssues: new Set(rows.filter((row) => spec.includesRule(row.ruleId)).map((row) => row.ruleId)).size,
+        state: inFlight.some((a) => a.scope === scope && a.status === "running")
+          ? ("scanning" as const)
+          : inFlight.some((a) => a.scope === scope)
+            ? ("queued" as const)
+            : ("idle" as const),
+      };
+    }),
+    fullScanQueued: inFlight.some((audit) => audit.scope === "full"),
+    critical: prescriptions.filter((p) => p.severity === "high"),
+    improvements: prescriptions.filter((p) => p.severity === "medium"),
+    minor: prescriptions.filter((p) => p.severity === "low"),
+    recentlyFixed: groupFixed(fixedIssues),
     fixCount,
   };
 };
@@ -165,16 +237,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent !== "scan") {
     return { ok: false, error: `Unsupported action: ${String(intent)}` };
   }
+  const requested = formData.get("scope") ?? "full";
+  if (!isScanScope(requested)) {
+    return { ok: false, error: `Unknown scan type: ${String(requested)}` };
+  }
 
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
   if (!shop) {
     shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
 
-  // Enqueueing is a single row insert, and it collapses a double-click into
-  // the scan that is already queued.
-  const { id, created } = await enqueueAudit(shop.id);
-  return { ok: true, auditId: id, alreadyRunning: !created };
+  // A single row insert; a repeat request for the same area joins the queued scan.
+  const { id, created } = await enqueueAudit(shop.id, requested);
+  return { ok: true, auditId: id, alreadyQueued: !created };
 };
 
 function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"; count: number }) {
@@ -184,7 +259,7 @@ function StatusBadge({ type, count }: { type: "critical" | "warning" | "success"
     success: { bg: "#D1FAE5", color: "#065F46", icon: "🟢" },
   };
   const { bg, color, icon } = styles[type];
-  const labels = { critical: "Critical", warning: "To Improve", success: "Fixed all time" };
+  const labels = { critical: "Critical", warning: "To Improve", success: "AI fixes applied" };
 
   return (
     <div style={{
@@ -216,6 +291,7 @@ type AffectedItem = {
   imageUrl: string | null;
   pageUrl: string | null;
   evidenceValue: string | null;
+  isNew: boolean;
 };
 
 type Issue = {
@@ -228,12 +304,122 @@ type Issue = {
   evidenceValue: string | null;
   pageUrl: string | null;
   fixableByAI: boolean;
-  /** Set for grouped catalog prescriptions: every image or product affected. */
+  /** Opened by its latest scan (any of its occurrences). */
+  isNew: boolean;
+  /** Catalog rules (images) are worded per product rather than per page. */
+  catalog: boolean;
+  /** Set when a rule fired more than once: every page, product or image affected. */
   affected: AffectedItem[] | null;
+};
+
+type AreaRow = {
+  scope: ScanScope;
+  label: string;
+  description: string;
+  lastScanned: string | null;
+  openIssues: number;
+  state: "idle" | "queued" | "scanning";
 };
 
 /** How many affected items to list before summarising the rest. */
 const MAX_AFFECTED_LISTED = 25;
+
+const FIXED_LABELS_SHOWN = 3;
+
+function LatestScanSummary({
+  scan,
+}: {
+  scan: { label: string; date: string; newCount: number; resolvedCount: number };
+}) {
+  return (
+    <s-stack direction="inline" gap="small" align-items="center">
+      <s-text color="subdued">{`Last scan: ${scan.label}, ${scan.date}`}</s-text>
+      <s-badge tone={scan.newCount > 0 ? "warning" : "info"}>{`${scan.newCount} new`}</s-badge>
+      <s-badge tone="success">{`${scan.resolvedCount} fixed`}</s-badge>
+    </s-stack>
+  );
+}
+
+function AreasPanel({
+  areas,
+  busy,
+  onScan,
+}: {
+  areas: AreaRow[];
+  busy: boolean;
+  onScan: (scope: ScanScope) => void;
+}) {
+  return (
+    <s-section heading="Scan one area">
+      <s-paragraph color="subdued">
+        Each area scans on its own, so you only spend time and AI credits on what you want to check.
+      </s-paragraph>
+      <s-stack direction="block" gap="base">
+        {areas.map((area) => (
+          <s-stack
+            key={area.scope}
+            direction="inline"
+            gap="base"
+            align-items="center"
+            justify-content="space-between"
+          >
+            <s-stack direction="block" gap="small-500">
+              <s-text type="strong">{area.label}</s-text>
+              <s-text color="subdued">{area.description}</s-text>
+              <s-text color="subdued">
+                {area.lastScanned ? `Last scanned ${area.lastScanned}` : "Not scanned yet"}
+                {area.lastScanned ? ` · ${area.openIssues} open ${area.openIssues === 1 ? "issue" : "issues"}` : ""}
+              </s-text>
+            </s-stack>
+            <s-stack direction="inline" gap="small" align-items="center">
+              {area.state === "queued" && <s-badge tone="info">Queued</s-badge>}
+              {area.state === "scanning" && <s-badge tone="info">Scanning</s-badge>}
+              <s-button
+                variant="secondary"
+                disabled={busy || area.state !== "idle"}
+                onClick={() => onScan(area.scope)}
+              >
+                Scan
+              </s-button>
+            </s-stack>
+          </s-stack>
+        ))}
+      </s-stack>
+    </s-section>
+  );
+}
+
+function FixedSection({ groups }: { groups: FixedGroup[] }) {
+  if (groups.length === 0) return null;
+  return (
+    <s-section heading={`Fixed in the last ${RECENTLY_FIXED_DAYS} days (${groups.length})`}>
+      <s-stack direction="block" gap="base">
+        {groups.map((group) => {
+          const shown = group.items.slice(0, FIXED_LABELS_SHOWN).map((item) => item.label);
+          const more = group.items.length - shown.length;
+          return (
+            <s-stack
+              key={group.ruleId}
+              direction="inline"
+              gap="small"
+              align-items="center"
+              justify-content="space-between"
+            >
+              <s-stack direction="block" gap="small-500">
+                <s-text type="strong">{group.title}</s-text>
+                <s-text color="subdued">
+                  {shown.join(", ")}
+                  {more > 0 ? ` and ${more} more` : ""}
+                </s-text>
+              </s-stack>
+              <s-badge tone="success">Fixed</s-badge>
+            </s-stack>
+          );
+        })}
+      </s-stack>
+    </s-section>
+  );
+}
 
 function AffectedList({ items }: { items: AffectedItem[] }) {
   const shown = items.slice(0, MAX_AFFECTED_LISTED);
@@ -248,11 +434,16 @@ function AffectedList({ items }: { items: AffectedItem[] }) {
             <s-thumbnail src={item.imageUrl} alt={item.title ?? "Product image"} size="small" />
           ) : null}
           <s-stack direction="block" gap="small-500">
-            {item.pageUrl ? (
-              <s-link href={item.pageUrl} target="_blank">{item.title ?? "Product"}</s-link>
-            ) : (
-              <s-text>{item.title ?? "Product"}</s-text>
-            )}
+            <s-stack direction="inline" gap="small-300" align-items="center">
+              {item.pageUrl ? (
+                <s-link href={item.pageUrl} target="_blank">
+                  {item.title ?? pagePath(item.pageUrl)}
+                </s-link>
+              ) : (
+                <s-text>{item.title ?? "Store settings"}</s-text>
+              )}
+              {item.isNew && <s-badge tone="info">New</s-badge>}
+            </s-stack>
             {item.evidenceValue && <s-text color="subdued">{item.evidenceValue}</s-text>}
           </s-stack>
         </s-stack>
@@ -280,12 +471,14 @@ function IssueCard({ issue }: { issue: Issue }) {
   const [open, setOpen] = useState(false);
   const impact = IMPACT[issue.severity as Severity] ?? IMPACT.low;
   const path = pagePath(issue.pageUrl);
-  const productCount = issue.affected
+  const placeCount = issue.affected
     ? new Set(issue.affected.map((item) => item.pageUrl ?? item.title)).size
     : 0;
-  const subtitle = issue.affected
-    ? `Across ${productCount} ${productCount === 1 ? "product" : "products"}`
-    : path;
+  const subtitle = !issue.affected
+    ? path
+    : issue.catalog
+      ? `Across ${placeCount} ${placeCount === 1 ? "product" : "products"}`
+      : `On ${placeCount} ${placeCount === 1 ? "page" : "pages"}`;
 
   return (
     <s-box padding="base" border-width="base none none none" border-color="base">
@@ -295,6 +488,7 @@ function IssueCard({ issue }: { issue: Issue }) {
           {subtitle && <s-text color="subdued">{subtitle}</s-text>}
         </s-stack>
         <s-stack direction="inline" gap="small" align-items="center">
+          {issue.isNew && <s-badge tone="info">New</s-badge>}
           <s-badge tone={impact.tone}>{impact.label}</s-badge>
           <s-button variant="secondary" onClick={() => setOpen((v) => !v)}>
             {open ? "Hide" : "View"}
@@ -380,13 +574,12 @@ export default function Dashboard() {
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
 
-  const isScanning = !!data.runningAudit;
+  const isScanning = Boolean(data.runningAudit);
   const isSubmitting = fetcher.state !== "idle";
-  const scanDisabled = isScanning || isSubmitting;
 
   const totalIssues = data.critical.length + data.improvements.length + data.minor.length;
 
-  const startScan = () => fetcher.submit({ intent: "scan" }, { method: "post" });
+  const startScan = (scope: ScanScope) => fetcher.submit({ intent: "scan", scope }, { method: "post" });
 
   // Poll while a scan is in flight so progress and results appear on their own.
   // Held in a ref because `revalidator` gets a new identity on every state
@@ -409,10 +602,10 @@ export default function Dashboard() {
       <s-button
         slot="primary-action"
         variant="primary"
-        disabled={scanDisabled}
-        onClick={startScan}
+        disabled={isSubmitting || data.fullScanQueued}
+        onClick={() => startScan("full")}
       >
-        {scanDisabled ? "Scanning..." : "Scan Store"}
+        {data.fullScanQueued ? "Full scan queued" : "Run full scan"}
       </s-button>
 
       {!isScanning && data.failedError && (
@@ -426,13 +619,13 @@ export default function Dashboard() {
       {isScanning && data.runningAudit?.status === "pending" && !data.workerAlive && (
         <s-banner tone="warning" heading="Your scan is queued but not started">
           The scan worker isn&apos;t running, so nothing is processing it yet. Start it
-          with <s-text type="strong">npm run dev</s-text> (it now starts the worker
+          with <s-text type="strong">npm run dev</s-text> (it starts the worker
           automatically), or run <s-text type="strong">npm run worker</s-text> in a
           separate terminal. The scan will begin as soon as a worker is up.
         </s-banner>
       )}
 
-      {isScanning && (
+      {isScanning && data.runningAudit && (
         <div style={{
           padding: 20,
           background: "#EFF6FF",
@@ -440,16 +633,16 @@ export default function Dashboard() {
           marginBottom: 24,
         }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-            Scanning your store…
+            {`Scanning: ${data.runningAudit.label}`}
           </div>
           <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 12 }}>
-            {data.runningAudit?.status === "pending"
+            {data.runningAudit.status === "pending"
               ? "Waiting to start"
-              : `${data.runningAudit?.currentStep || "Getting started"} · ${data.runningAudit?.progress ?? 0}%`}
+              : `${data.runningAudit.currentStep || "Getting started"} · ${data.runningAudit.progress}%`}
           </div>
           <div style={{ height: 6, background: "#DBEAFE", borderRadius: 3, overflow: "hidden" }}>
             <div style={{
-              width: `${data.runningAudit?.progress ?? 0}%`,
+              width: `${data.runningAudit.progress}%`,
               height: "100%",
               background: "#2563EB",
               transition: "width 300ms ease",
@@ -458,12 +651,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {data.hasAudit ? (
+      {data.hasScan ? (
         <>
           <div style={{ marginBottom: 24 }}>
-            <p style={{ fontSize: 13, color: "#6B7280", margin: "0 0 16px 0" }}>
-              Last scan: {data.lastAuditDate}
-            </p>
+            {data.latestScan && (
+              <div style={{ marginBottom: 16 }}>
+                <LatestScanSummary scan={data.latestScan} />
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <StatusBadge type="critical" count={data.critical.length} />
               <StatusBadge type="warning" count={data.improvements.length} />
@@ -481,16 +676,19 @@ export default function Dashboard() {
               padding: 48,
               background: "#F0FDF4",
               borderRadius: 12,
+              marginBottom: 24,
             }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
               <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0", color: "#065F46" }}>
-                Your store looks great!
+                No open issues
               </h2>
               <p style={{ fontSize: 14, color: "#6B7280", margin: 0 }}>
-                No issues found. Run another scan anytime.
+                Nothing found in the areas you have scanned.
               </p>
             </div>
           )}
+
+          <FixedSection groups={data.recentlyFixed} />
         </>
       ) : (
         !isScanning && (
@@ -499,20 +697,23 @@ export default function Dashboard() {
             padding: 48,
             background: "#F9FAFB",
             borderRadius: 12,
+            marginBottom: 24,
           }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0" }}>
               Ready to check your store?
             </h2>
             <p style={{ fontSize: 14, color: "#6B7280", margin: "0 0 16px 0" }}>
-              We&apos;ll scan your pages and find ways to improve conversions.
+              Run a full scan, or scan one area below.
             </p>
-            <s-button variant="primary" disabled={scanDisabled} onClick={startScan}>
-              Start First Scan
+            <s-button variant="primary" disabled={isSubmitting} onClick={() => startScan("full")}>
+              Run full scan
             </s-button>
           </div>
         )
       )}
+
+      <AreasPanel areas={data.areas} busy={isSubmitting} onScan={startScan} />
 
       <div style={{
         display: "flex",
@@ -522,7 +723,7 @@ export default function Dashboard() {
         borderTop: "1px solid #E5E7EB",
       }}>
         <Link to="/app/history" style={{ fontSize: 13, color: "#2563EB", textDecoration: "none" }}>
-          View fix history ({data.fixCount})
+          Scan and fix history
         </Link>
         <Link to="/app/settings" style={{ fontSize: 13, color: "#2563EB", textDecoration: "none" }}>
           Settings

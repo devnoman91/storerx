@@ -26,11 +26,17 @@ import { collectAdminData } from "../app/collectors/admin";
 import { openStorefrontSession } from "../app/collectors/storefront";
 import { collectCatalogImages } from "../app/collectors/images";
 import { NonRetryableError, StorefrontLockedError } from "../app/errors";
-import { explainFindings } from "../app/ai/prompts";
+import { EXPLAIN_PROMPT_VERSION, explainFindings } from "../app/ai/prompts";
 import { logUsage } from "../app/ai/generate";
 import { SEVERITY_WEIGHTS, type Finding, type ShopData } from "../app/rules/types";
 import { processAuditJob, type AuditProgress } from "./audit";
-import { collapseCatalogFindings } from "../app/scoring";
+import { recordScan } from "../app/issues/store.server";
+import { SCAN_SCOPES, isScanScope, needsStorefront, type ScanScope } from "../app/scans/scopes";
+import {
+  explanationContextHash,
+  partitionByCache,
+  type Explanation,
+} from "../app/issues/explanations";
 
 /**
  * How often to look for work when the queue is empty. Audits are not
@@ -44,11 +50,6 @@ const REAP_INTERVAL_MS = 60_000;
 
 /** Cap on distinct rules sent to the LLM for explanation, highest severity first. */
 const MAX_EXPLAINED_RULES = 25;
-
-interface Explanation {
-  explanation: string;
-  recommendation: string;
-}
 
 const WORKER_ID = `${hostname()}:${process.pid}`;
 
@@ -72,42 +73,73 @@ function buildTargetTitles(shopData: ShopData): Map<string, string> {
   return titles;
 }
 
-async function explain(
+/**
+ * Explanations per rule, reusing what was already generated for this shop.
+ * Only rules never explained before — or explained under an older prompt or
+ * brand voice — are sent to the LLM, so re-scanning an unchanged store costs
+ * no tokens.
+ */
+async function explainWithCache(
   findings: Finding[],
-  shop: { domain: string; name: string | null; brandVoice: string | null },
-): Promise<Map<string, Explanation>> {
-  const explanations = new Map<string, Explanation>();
-  if (findings.length === 0) return explanations;
-
-  // One entry per rule. The same rule fires once per sampled product, and the
-  // explanation is keyed by ruleId anyway — sending the repeats spent the cap
-  // on duplicates and left most distinct rules unexplained.
+  shop: { id: string; domain: string; name: string | null; brandVoice: string | null },
+): Promise<{ explanations: Map<string, Explanation>; generated: number; reused: number }> {
+  // One entry per rule: the explanation is the same wherever the rule fired.
   const byRule = new Map<string, Finding>();
   for (const finding of findings) {
     if (!byRule.has(finding.ruleId)) byRule.set(finding.ruleId, finding);
   }
-  const ranked = [...byRule.values()]
+  if (byRule.size === 0) return { explanations: new Map(), generated: 0, reused: 0 };
+
+  const shopName = shop.name || shop.domain;
+  const contextHash = explanationContextHash({
+    promptVersion: EXPLAIN_PROMPT_VERSION,
+    shopName,
+    brandVoice: shop.brandVoice,
+  });
+  const cached = await prisma.explanationCache.findMany({
+    where: { shopId: shop.id, ruleId: { in: [...byRule.keys()] } },
+  });
+  const { hits, misses } = partitionByCache(byRule.keys(), cached, contextHash);
+  const explanations = new Map(hits);
+  if (misses.length === 0) return { explanations, generated: 0, reused: hits.size };
+
+  const toExplain = misses
+    .map((ruleId) => byRule.get(ruleId)!)
     .sort((a, b) => SEVERITY_WEIGHTS[b.severity] - SEVERITY_WEIGHTS[a.severity])
     .slice(0, MAX_EXPLAINED_RULES);
+  const requested = new Set(toExplain.map((finding) => finding.ruleId));
 
   try {
-    const result = await explainFindings(ranked, {
-      name: shop.name || shop.domain,
+    const result = await explainFindings(toExplain, {
+      name: shopName,
       brandVoice: shop.brandVoice || undefined,
     });
-    for (const item of result.data.findings) {
-      explanations.set(item.ruleId, {
-        explanation: item.explanation,
-        recommendation: item.recommendation,
-      });
+    const fresh = result.data.findings.filter((item) => requested.has(item.ruleId));
+    for (const item of fresh) {
+      explanations.set(item.ruleId, { explanation: item.explanation, recommendation: item.recommendation });
     }
+    await prisma.$transaction(
+      fresh.map((item) =>
+        prisma.explanationCache.upsert({
+          where: { shopId_ruleId: { shopId: shop.id, ruleId: item.ruleId } },
+          create: {
+            shopId: shop.id,
+            ruleId: item.ruleId,
+            contextHash,
+            explanation: item.explanation,
+            recommendation: item.recommendation,
+          },
+          update: { contextHash, explanation: item.explanation, recommendation: item.recommendation },
+        }),
+      ),
+    );
     await logUsage(shop.domain, "explain", "gpt-4.1-mini", result.usage);
+    return { explanations, generated: fresh.length, reused: hits.size };
   } catch (error) {
     // An audit is still useful without prose — findings come from the rules.
     console.error(`[worker] explainFindings failed for ${shop.domain}:`, error);
+    return { explanations, generated: 0, reused: hits.size };
   }
-
-  return explanations;
 }
 
 async function runAudit(claimed: ClaimedAudit): Promise<void> {
@@ -128,10 +160,13 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
   const { admin } = await unauthenticated.admin(shopDomain);
   const shopData = await collectAdminData(admin);
 
-  // Development stores are always password-protected. Log in once so every
-  // page fetch sees the real store instead of the lock screen.
+  const scope: ScanScope = isScanScope(claimed.scope) ? claimed.scope : "full";
+  const spec = SCAN_SCOPES[scope];
+
+  // Only scans that read storefront pages need to get past the password page;
+  // image and alt-text scans use the Admin API alone.
   let storefrontCookie: string | undefined;
-  if (shopData.passwordProtected) {
+  if (needsStorefront(scope) && shopData.passwordProtected) {
     if (!shop.storefrontPassword) {
       throw new StorefrontLockedError(
         "Your storefront is password-protected, so StoreRx can only see the password " +
@@ -142,79 +177,34 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
     storefrontCookie = await openStorefrontSession(shopDomain, shop.storefrontPassword);
   }
 
-  const result = await processAuditJob({ shopDomain, auditId }, shopData, onProgress, {
+  const result = await processAuditJob({ shopDomain, auditId, scope }, shopData, onProgress, {
     storefrontCookie,
-    collectImages: () => collectCatalogImages(admin, shopDomain),
+    collectImages: spec.catalogImages ? () => collectCatalogImages(admin, shopDomain) : undefined,
   });
   await progressWrites;
 
-  const explanations = await explain(result.findings, shop);
-  const targetTitles = buildTargetTitles(shopData);
+  // Only this scan's findings are explained, and cached rules cost nothing.
+  const { explanations, generated, reused } = await explainWithCache(result.findings, shop);
 
-  // Count prescriptions, not rows: 40 images missing alt text is one issue.
-  const prescriptions = collapseCatalogFindings(result.findings, (f) => f.page);
-  const counts = { high: 0, medium: 0, low: 0 };
-  for (const finding of prescriptions) counts[finding.severity]++;
-
-  // One transaction so a partially-written audit is never shown as completed.
-  await prisma.$transaction([
-    prisma.finding.deleteMany({ where: { auditId } }),
-    prisma.pageScore.deleteMany({ where: { auditId } }),
-    prisma.finding.createMany({
-      data: result.findings.map((finding) => ({
-        auditId,
-        ruleId: finding.ruleId,
-        pageType: finding.page,
-        severity: finding.severity,
-        title: finding.title,
-        explanation: explanations.get(finding.ruleId)?.explanation || null,
-        recommendation: explanations.get(finding.ruleId)?.recommendation || null,
-        pageUrl: finding.pageUrl || null,
-        evidenceType: finding.evidence?.type || null,
-        evidenceValue: finding.evidence?.value || null,
-        fixableByAI: finding.fixableByAI,
-        fixType: finding.fixType || null,
-        targetId: finding.targetId || null,
-        targetTitle:
-          finding.targetTitle ??
-          (finding.targetId ? targetTitles.get(finding.targetId) || null : null),
-        imageUrl: finding.imageUrl || null,
-      })),
-    }),
-    prisma.pageScore.createMany({
-      data: result.pageResults.map((page) => ({
-        auditId,
-        pageType: page.pageType,
-        pageUrl: page.url,
-        croScore: page.croScore,
-        perfScore: page.perfScore,
-        issueCount: page.findings.length,
-      })),
-    }),
-    prisma.audit.update({
-      where: { id: auditId },
-      data: {
-        status: "completed",
-        progress: 100,
-        currentStep: null,
-        overallScore: result.scores.overall,
-        conversionScore: result.scores.conversion,
-        uxScore: result.scores.ux,
-        performanceScore: result.scores.performance,
-        seoScore: result.scores.seo,
-        productPagesScore: result.scores.productPages,
-        totalIssues: prescriptions.length,
-        highCount: counts.high,
-        mediumCount: counts.medium,
-        lowCount: counts.low,
-        completedAt: result.completedAt,
-      },
-    }),
-  ]);
+  const outcome = await recordScan({
+    shopId,
+    auditId,
+    scope,
+    findings: result.findings,
+    evaluatedRules: result.evaluatedRules,
+    scannedUrls: result.scannedUrls,
+    pageResults: result.pageResults,
+    scores: result.scores,
+    completedAt: result.completedAt,
+    explanations,
+    targetTitles: buildTargetTitles(shopData),
+  });
 
   console.log(
-    `[worker] audit ${auditId} completed for ${shopDomain}: ` +
-      `${result.findings.length} findings, score ${result.scores.overall}`,
+    `[worker] ${spec.label.toLowerCase()} scan ${auditId} completed for ${shopDomain}: ` +
+      `${result.findings.length} findings from ${result.evaluatedRules.length} rules; ` +
+      `${outcome.newCount} new, ${outcome.resolved} fixed, ${outcome.stillOpen} still open; ` +
+      `explanations ${generated} generated, ${reused} reused`,
   );
 }
 

@@ -56,9 +56,9 @@ const PAGE_TO_CATEGORY: Record<PageType, ScoreCategory> = {
 const MAX_CATEGORY_PENALTY = 100;
 
 /**
- * Pages whose rules run once per catalog item rather than once per page.
- * 40 images missing alt text is one problem at scale, not 40 problems — so
- * these count once per rule for scoring and display as one prescription.
+ * Pages whose rules run once per catalog item rather than once per page. Only
+ * used for wording ("40 images are missing alt text"); scoring treats every
+ * rule the same way — see collapseByRule.
  */
 const CATALOG_PAGES: ReadonlySet<string> = new Set<PageType>(["images"]);
 
@@ -66,14 +66,15 @@ export function isCatalogPage(page: string): boolean {
   return CATALOG_PAGES.has(page);
 }
 
-/** Keep the first finding per rule on catalog pages; leave other pages as-is. */
-export function collapseCatalogFindings<T extends { ruleId: string }>(
-  findings: T[],
-  pageOf: (finding: T) => string,
-): T[] {
+/**
+ * One prescription per rule. A rule that fires on five product pages, or on
+ * forty images, is one problem at scale — counting each occurrence made the
+ * score punish stores for sampling more pages and saturated categories to 0.
+ * Every occurrence is still stored and listed under its prescription.
+ */
+export function collapseByRule<T extends { ruleId: string }>(findings: T[]): T[] {
   const seen = new Set<string>();
   return findings.filter((finding) => {
-    if (!isCatalogPage(pageOf(finding))) return true;
     if (seen.has(finding.ruleId)) return false;
     seen.add(finding.ruleId);
     return true;
@@ -138,7 +139,7 @@ export function calculateStoreHealth(
     productPages: [],
   };
 
-  const prescriptions = collapseCatalogFindings(findings, (f) => f.page);
+  const prescriptions = collapseByRule(findings);
   for (const finding of prescriptions) {
     const category = PAGE_TO_CATEGORY[finding.page];
     byCategory[category].push(finding);

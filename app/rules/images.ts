@@ -202,6 +202,20 @@ export function checkDuplicateImages(products: CatalogProduct[]): Finding[] {
   return findings;
 }
 
+/**
+ * Every rule checkCatalogImages can report. A catalog scan evaluates all of
+ * them at once, so these are the rules it has re-checked.
+ */
+export const CATALOG_IMAGE_RULE_IDS = [
+  "img.alt",
+  "img.size",
+  "img.dims.large",
+  "img.dims.small",
+  "img.count",
+  "img.ratio",
+  "img.duplicate",
+] as const;
+
 /** Run every catalog image check. */
 export function checkCatalogImages(products: CatalogProduct[]): Finding[] {
   return [...products.flatMap(checkProductImages), ...checkDuplicateImages(products)];

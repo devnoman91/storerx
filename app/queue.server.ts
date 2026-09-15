@@ -10,6 +10,7 @@
  */
 
 import prisma from "./db.server";
+import type { ScanScope } from "./scans/scopes";
 
 /** An audit still "running" after this long is assumed dead and reclaimed. */
 export const STALE_AUDIT_MS = 15 * 60 * 1000;
@@ -27,16 +28,23 @@ export interface ClaimedAudit {
   id: string;
   shopId: string;
   attempts: number;
+  scope: string;
 }
 
 /**
  * Add an audit to the queue. Returns the existing one if a scan is already
  * queued or running for this shop, so a double-click cannot start two.
  */
-export async function enqueueAudit(shopId: string): Promise<{ id: string; created: boolean }> {
+export async function enqueueAudit(
+  shopId: string,
+  scope: ScanScope = "full",
+): Promise<{ id: string; created: boolean }> {
+  // One queued scan per area: a double-click cannot queue the same scan twice,
+  // but a homepage scan and an images scan can both wait their turn.
   const inFlight = await prisma.audit.findFirst({
     where: {
       shopId,
+      scope,
       OR: [
         // Pending never goes stale: it is waiting for a worker, not abandoned.
         { status: "pending" },
@@ -49,7 +57,7 @@ export async function enqueueAudit(shopId: string): Promise<{ id: string; create
   if (inFlight) return { id: inFlight.id, created: false };
 
   const audit = await prisma.audit.create({
-    data: { shopId, status: "pending" },
+    data: { shopId, scope, status: "pending" },
     select: { id: true },
   });
   return { id: audit.id, created: true };
@@ -71,13 +79,21 @@ export async function claimNextAudit(): Promise<ClaimedAudit | null> {
       attempts = attempts + 1,
       error = NULL
     WHERE id = (
-      SELECT id FROM "Audit"
-      WHERE status = 'pending' AND attempts < ${MAX_ATTEMPTS}
-      ORDER BY "createdAt"
+      SELECT candidate.id FROM "Audit" candidate
+      WHERE candidate.status = 'pending'
+        AND candidate.attempts < ${MAX_ATTEMPTS}
+        -- One scan at a time per shop: scans of the same store update the same
+        -- issue list. (The issue update also takes a per-shop lock, which is
+        -- what guarantees correctness if two claims still race.)
+        AND NOT EXISTS (
+          SELECT 1 FROM "Audit" busy
+          WHERE busy."shopId" = candidate."shopId" AND busy.status = 'running'
+        )
+      ORDER BY candidate."createdAt"
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, "shopId", attempts
+    RETURNING id, "shopId", attempts, scope
   `;
   return rows[0] ?? null;
 }

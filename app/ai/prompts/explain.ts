@@ -6,6 +6,12 @@ import { z } from "zod";
 import { generate, type GenerateResult } from "../generate";
 import type { Finding } from "../../rules/types";
 
+/**
+ * Bump whenever the prompt or schema changes: cached explanations generated
+ * with an older version are regenerated instead of reused.
+ */
+export const EXPLAIN_PROMPT_VERSION = "2";
+
 export const ExplanationSchema = z.object({
   findings: z.array(z.object({
     ruleId: z.string(),

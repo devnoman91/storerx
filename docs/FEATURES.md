@@ -62,10 +62,44 @@ Audits run as **background jobs**. The `Audit` table is the queue: the worker cl
 | SEO | Meta, titles, alt text, structured data, headings |
 | Product Pages | Product-page rules + image checks |
 
-Scoring = 100 − Σ(severity weight × issue count), capped per category.
+Scoring = 100 − Σ(severity weight × issue count), capped per category, where an
+issue is a **rule**, not an occurrence: "reviews below the fold" on five sampled
+products counts once (and is listed with its five pages). Counting occurrences
+punished stores for sampling more pages and saturated categories to 0.
 Severity weights: high = 10, medium = 5, low = 2.
 
 Score history is stored per audit → **trend graph** over time (weekly audit tier).
+
+**Scan areas.** Merchants can run a full scan or scan one area on its own
+(`app/scans/scopes.ts`), so time and AI credits go only where they ask:
+
+| Scan | Fetches | Rules |
+|---|---|---|
+| Full | Pages, catalog images, PageSpeed, checkout | Everything |
+| Homepage | Homepage | `home.*` |
+| Product pages | 5 sampled products | `prod.*` except SEO |
+| Collections | 3 largest collections | `coll.*` except SEO |
+| SEO | Products + collections | `prod.seo.title`, `prod.seo.meta`, `prod.schema`, `coll.description` |
+| Images | Catalog metadata (Admin API) | `img.*` except alt text |
+| Alt text | Catalog metadata (Admin API) | `img.alt` |
+
+Image and alt-text scans never need the storefront password. Only the full scan
+produces store-wide scores; a partial scan doesn't see enough of the store.
+
+**Issue list.** The store's current state is the `Issue` table, not "the latest
+scan" — with partial scans, a homepage scan must not hide product issues. Every
+finding has a fingerprint (rule + page path, or the product/image it targets;
+never titles or measured values). Each scan updates only what it re-checked
+(`app/issues/reconcile.ts`):
+- **Found** → opened, reopened, or kept open.
+- **Not found and covered** → resolved. Covered means the rule ran to
+  completion in this scan and, for page rules, that exact page was fetched.
+- **Not covered** → untouched. A crashed rule, a skipped PageSpeed run or an
+  unsampled product never counts as fixed.
+- **New** only when the rule had run before; a first look at an area is a baseline.
+
+Writes happen in one transaction under a per-shop lock, and the queue runs one
+scan per shop at a time.
 
 ---
 
@@ -206,6 +240,10 @@ Rules:
 - Store **brand voice** sample (merchant pastes 2–3 paragraphs) in app metafield; include in generation prompts.
 - Retry with backoff; queue all calls; never call OpenAI inside HTTP request handlers.
 - Log token usage per shop for cost tracking.
+- **Explanations are cached** per shop and rule (`ExplanationCache`). Only rules
+  not yet explained — or explained under an older prompt version or brand voice —
+  go to the LLM, so re-scanning an unchanged store costs no tokens. Bump
+  `EXPLAIN_PROMPT_VERSION` when the explain prompt changes.
 
 Cost estimate (2026 list prices, verify): ~$0.02 per audit explanation, ~$0.005–0.03 per fix, ~$1–2 per full-catalog vision scan (200 products × 4 images). LLM cost per merchant/month ≪ $1 at $19 tier.
 
