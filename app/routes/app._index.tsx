@@ -779,7 +779,9 @@ export default function Dashboard() {
         )
       )}
 
-      <div ref={areasRef}>
+      {/* The wrapper div (needed for scroll-to-areas) is not an s-section, so
+          the page does not space it from the section below it. */}
+      <div ref={areasRef} style={{ marginBottom: 24 }}>
         <AreasPanel areas={data.areas} busy={isSubmitting} onScan={startScan} />
       </div>
 

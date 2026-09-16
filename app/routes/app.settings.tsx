@@ -102,7 +102,12 @@ export default function Settings() {
         </s-banner>
       )}
 
-      <fetcher.Form method="post">
+      {/* The form wrapper is not an s-section, so the page does not space its
+          sections from each other or from what sits above and below them. */}
+      <fetcher.Form
+        method="post"
+        style={{ display: "flex", flexDirection: "column", gap: 24, margin: "24px 0" }}
+      >
         <s-section heading="How StoreRx writes for you">
           <s-stack direction="block" gap="base">
             <s-text-area
