@@ -7,7 +7,7 @@ import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
 import { checkScanAllowed, getShopUsage } from "../billing/billing.server";
 import { isCatalogPage } from "../scoring";
-import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, type ScanScope } from "../scans/scopes";
+import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, isSelectableScope, type ScanScope } from "../scans/scopes";
 import {
   IMAGE_MAX_DIMENSION,
   IMAGE_MIN_DIMENSION,
@@ -205,7 +205,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       failedScan && (!latestScan || failedScan.createdAt > latestScan.createdAt)
         ? `${scopeLabel(failedScan.scope)} scan: ${failedScan.error ?? "unknown error"}`
         : null,
-    areas: SCAN_SCOPE_ORDER.filter((scope) => scope !== "full").map((scope) => {
+    areas: SCAN_SCOPE_ORDER.map((scope) => {
       const spec = SCAN_SCOPES[scope];
       const when = lastScanned.get(scope);
       return {
@@ -221,13 +221,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             : ("idle" as const),
       };
     }),
-    fullScanQueued: inFlight.some((audit) => audit.scope === "full"),
     plan: {
       label: planUsage.plan.label,
       isFree: planUsage.plan.key === "free",
       resetsAt: planUsage.resetsAt.toDateString(),
-      fullScans: { used: planUsage.usage.fullScans, limit: planUsage.plan.limits.fullScans },
-      areaScans: { used: planUsage.usage.areaScans, limit: planUsage.plan.limits.areaScans },
+      scans: { used: planUsage.usage.scans, limit: planUsage.plan.limits.scans },
       aiExplanations: { used: planUsage.usage.aiExplanations, limit: planUsage.plan.limits.aiExplanations },
     },
     critical: prescriptions.filter((p) => p.severity === "high"),
@@ -247,9 +245,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent !== "scan") {
     return { ok: false, error: `Unsupported action: ${String(intent)}` };
   }
-  const requested = formData.get("scope") ?? "full";
-  if (!isScanScope(requested)) {
-    return { ok: false, error: `Unknown scan type: ${String(requested)}` };
+  const requested = formData.get("scope");
+  if (!isSelectableScope(requested)) {
+    return { ok: false, error: `Unknown scan area: ${String(requested)}` };
   }
 
   let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
@@ -265,7 +263,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
   if (queued) return { ok: true, auditId: queued.id, alreadyQueued: true };
 
-  const allowed = await checkScanAllowed(shop, requested === "full");
+  const allowed = await checkScanAllowed(shop);
   if (!allowed.allowed) {
     return { ok: false, error: allowed.message, limitReached: true };
   }
@@ -375,7 +373,8 @@ function AreasPanel({
   return (
     <s-section heading="Scan one area">
       <s-paragraph color="subdued">
-        Each area scans on its own, so you only spend time and AI credits on what you want to check.
+        Each area scans on its own, so you only spend time and AI credits on what you want to
+        check. Scan the area you changed after a fix to see it clear.
       </s-paragraph>
       <s-stack direction="block" gap="base">
         {areas.map((area) => (
@@ -421,20 +420,12 @@ function usageText({ used, limit }: UsageCount): string {
 function PlanUsage({
   plan,
 }: {
-  plan: {
-    label: string;
-    isFree: boolean;
-    resetsAt: string;
-    fullScans: UsageCount;
-    areaScans: UsageCount;
-    aiExplanations: UsageCount;
-  };
+  plan: { label: string; isFree: boolean; resetsAt: string; scans: UsageCount; aiExplanations: UsageCount };
 }) {
   return (
     <s-section heading={`${plan.label} plan this month`}>
       <s-stack direction="block" gap="small">
-        <s-text>Full scans: {usageText(plan.fullScans)}</s-text>
-        <s-text>Single-area scans: {usageText(plan.areaScans)}</s-text>
+        <s-text>Scans: {usageText(plan.scans)}</s-text>
         <s-text>AI explanations: {usageText(plan.aiExplanations)}</s-text>
         <s-text color="subdued">Resets on {plan.resetsAt}.</s-text>
         <s-link href="/app/billing">{plan.isFree ? "Upgrade for more scans" : "Manage plan"}</s-link>
@@ -653,15 +644,6 @@ export default function Dashboard() {
 
   return (
     <s-page heading="Store Health">
-      <s-button
-        slot="primary-action"
-        variant="primary"
-        disabled={isSubmitting || data.fullScanQueued}
-        onClick={() => startScan("full")}
-      >
-        {data.fullScanQueued ? "Full scan queued" : "Run full scan"}
-      </s-button>
-
       {fetcher.data && !fetcher.data.ok && (
         <s-banner tone={"limitReached" in fetcher.data ? "warning" : "critical"} heading="Scan not started">
           {fetcher.data.error}{" "}
@@ -764,12 +746,9 @@ export default function Dashboard() {
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px 0" }}>
               Ready to check your store?
             </h2>
-            <p style={{ fontSize: 14, color: "#6B7280", margin: "0 0 16px 0" }}>
-              Run a full scan, or scan one area below.
+            <p style={{ fontSize: 14, color: "#6B7280", margin: 0 }}>
+              Pick an area below to scan. Each one takes a minute or two.
             </p>
-            <s-button variant="primary" disabled={isSubmitting} onClick={() => startScan("full")}>
-              Run full scan
-            </s-button>
           </div>
         )
       )}

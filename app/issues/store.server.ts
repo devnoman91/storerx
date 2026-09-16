@@ -9,7 +9,7 @@
 
 import type { Finding } from "../rules/types";
 import type { ScanScope } from "../scans/scopes";
-import { collapseByRule } from "../scoring";
+import { calculateStoreHealth, collapseByRule, type ScorableIssue } from "../scoring";
 import prisma from "../db.server";
 import type { Explanation } from "./explanations";
 import { fingerprint, normalizePath } from "./identity";
@@ -29,14 +29,13 @@ export interface ScanRecord {
     perfScore: number | null;
     findings: Finding[];
   }>;
-  scores: {
-    overall: number;
-    conversion: number;
-    ux: number;
-    performance: number | null;
-    seo: number;
-    productPages: number;
-  } | null;
+  /**
+   * Lighthouse score this scan measured, or null when it did not measure one.
+   * The store score is recomputed from the shop's open issues after every
+   * scan, so an area scan updates it too; the last measured speed score
+   * carries over until a new speed scan replaces it.
+   */
+  performanceScore: number | null;
   completedAt: Date;
   explanations: Map<string, Explanation>;
   targetTitles: Map<string, string>;
@@ -169,9 +168,8 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
         })),
       });
 
-      // Page scores only mean something for a scan that ran every page rule.
       await tx.pageScore.deleteMany({ where: { auditId } });
-      if (scan.scope === "full") {
+      if (scan.pageResults.length > 0) {
         await tx.pageScore.createMany({
           data: scan.pageResults.map((page) => ({
             auditId,
@@ -184,6 +182,25 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
         });
       }
 
+      // Store health after this scan: every issue still open, scored together.
+      // A single-area scan only changes its own area's issues, so the store
+      // score moves by what this scan actually found or cleared.
+      const open = await tx.issue.findMany({
+        where: { shopId, status: "open" },
+        select: { ruleId: true, severity: true, pageType: true },
+      });
+      const scorable: ScorableIssue[] = open.map((issue) => ({
+        ruleId: issue.ruleId,
+        severity: issue.severity as ScorableIssue["severity"],
+        page: issue.pageType,
+      }));
+      const health = calculateStoreHealth(
+        scorable,
+        { performanceScore: scan.performanceScore ?? (await lastMeasuredSpeed(tx, shopId, auditId)) },
+      );
+      const category = (name: string) => health.categories.find((c) => c.category === name);
+      const performance = category("performance");
+
       const prescriptions = collapseByRule(scan.findings);
       const counts = { high: 0, medium: 0, low: 0 };
       for (const finding of prescriptions) counts[finding.severity]++;
@@ -194,12 +211,12 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
           status: "completed",
           progress: 100,
           currentStep: null,
-          overallScore: scan.scores?.overall ?? null,
-          conversionScore: scan.scores?.conversion ?? null,
-          uxScore: scan.scores?.ux ?? null,
-          performanceScore: scan.scores?.performance ?? null,
-          seoScore: scan.scores?.seo ?? null,
-          productPagesScore: scan.scores?.productPages ?? null,
+          overallScore: health.overall,
+          conversionScore: category("conversion")?.score ?? null,
+          uxScore: category("ux")?.score ?? null,
+          performanceScore: performance?.measured ? performance.score : null,
+          seoScore: category("seo")?.score ?? null,
+          productPagesScore: category("productPages")?.score ?? null,
           totalIssues: prescriptions.length,
           highCount: counts.high,
           mediumCount: counts.medium,
@@ -224,6 +241,20 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
 }
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * The speed score from the shop's most recent scan that measured one. Speed
+ * is measured only by a speed scan, so without this every other scan would
+ * report the store as having no performance measurement at all.
+ */
+async function lastMeasuredSpeed(tx: Tx, shopId: string, auditId: string): Promise<number | null> {
+  const audit = await tx.audit.findFirst({
+    where: { shopId, status: "completed", id: { not: auditId }, performanceScore: { not: null } },
+    orderBy: { completedAt: "desc" },
+    select: { performanceScore: true },
+  });
+  return audit?.performanceScore ?? null;
+}
 
 /**
  * A shop that was scanned before the issue list existed starts with an empty

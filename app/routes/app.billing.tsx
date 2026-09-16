@@ -92,7 +92,7 @@ const FAQ: [string, string][] = [
   ],
   [
     "What counts towards my limits?",
-    "Every scan you start counts towards your plan, apart from scans that fail. AI explanations are only generated the first time StoreRx sees an issue, so running the same scan again doesn't use more of them.",
+    "Every scan you start counts towards your plan, whichever area it checks, apart from scans that fail. AI explanations are only generated the first time StoreRx sees an issue, so scanning the same area again doesn't use more of them.",
   ],
 ];
 
@@ -139,8 +139,7 @@ export default function Billing() {
 
       <s-section heading={`Current plan: ${current.label}`}>
         <s-stack direction="block" gap="small">
-          <s-text>Full scans: {limitText(data.usage.fullScans, current.limits.fullScans)}</s-text>
-          <s-text>Single-area scans: {limitText(data.usage.areaScans, current.limits.areaScans)}</s-text>
+          <s-text>Scans: {limitText(data.usage.scans, current.limits.scans)}</s-text>
           <s-text>AI explanations: {limitText(data.usage.aiExplanations, current.limits.aiExplanations)}</s-text>
           <s-text color="subdued">
             Limits reset on {data.resetsAt}.{data.renewsOn ? ` Your plan renews on ${data.renewsOn}.` : ""}

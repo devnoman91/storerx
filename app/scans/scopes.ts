@@ -1,14 +1,24 @@
 /**
  * Scan scopes: what each kind of scan fetches and which rules it runs.
  *
- * A merchant can scan one area — the homepage, product pages, SEO, images —
- * instead of the whole store. A scoped scan only fetches what its rules need
- * and only sends its own findings to the LLM, so it costs less time and fewer
- * tokens. It also only opens or closes issues for the rules it actually ran
- * (see app/issues/reconcile.ts).
+ * A store is scanned one area at a time — the homepage, product pages, SEO,
+ * images, speed — never all at once. Each scan only fetches what its rules
+ * need and only sends its own findings to the LLM, so it costs little time and
+ * few tokens, and it only opens or closes issues for the rules it actually ran
+ * (see app/issues/reconcile.ts). Between them the areas cover every rule.
  */
 
-export type ScanScope = "full" | "homepage" | "product" | "collection" | "seo" | "images" | "alt";
+export type ScanScope =
+  | "homepage"
+  | "product"
+  | "collection"
+  | "seo"
+  | "images"
+  | "alt"
+  | "speed"
+  | "checkout"
+  /** Retired: scans recorded before the store was scanned area by area. */
+  | "full";
 
 export type StorefrontArea = "homepage" | "collection" | "product";
 
@@ -37,6 +47,7 @@ const SEO_RULES: ReadonlySet<string> = new Set([
 const ALT_TEXT_RULES: ReadonlySet<string> = new Set(["img.alt"]);
 
 export const SCAN_SCOPES: Record<ScanScope, ScopeSpec> = {
+  // Retired. Kept so scans recorded before per-area scanning still read back.
   full: {
     label: "Full scan",
     description: "Every check: pages, SEO, images, speed and checkout",
@@ -100,20 +111,45 @@ export const SCAN_SCOPES: Record<ScanScope, ScopeSpec> = {
     checkout: false,
     includesRule: (id) => ALT_TEXT_RULES.has(id),
   },
+  speed: {
+    label: "Speed",
+    description: "Loading speed, layout shift and app weight, measured by Google PageSpeed",
+    pages: [],
+    catalogImages: false,
+    performance: true,
+    checkout: false,
+    includesRule: (id) => id.startsWith("perf."),
+  },
+  checkout: {
+    label: "Checkout",
+    description: "Express payments, guest checkout, shipping and payment options",
+    pages: [],
+    catalogImages: false,
+    performance: false,
+    checkout: true,
+    includesRule: (id) => id.startsWith("chk."),
+  },
 };
 
+/** The areas a merchant can scan, in the order they are offered. */
 export const SCAN_SCOPE_ORDER: ScanScope[] = [
-  "full",
   "homepage",
   "product",
   "collection",
   "seo",
   "images",
   "alt",
+  "speed",
+  "checkout",
 ];
 
 export function isScanScope(value: unknown): value is ScanScope {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(SCAN_SCOPES, value);
+}
+
+/** Scopes a scan can be requested for. "full" is kept only to read old scans. */
+export function isSelectableScope(value: unknown): value is ScanScope {
+  return isScanScope(value) && SCAN_SCOPE_ORDER.includes(value);
 }
 
 /** Whether this scope needs storefront HTML (and so the storefront password). */

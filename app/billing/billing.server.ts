@@ -200,9 +200,8 @@ export async function getShopUsage(shop: BillingShop, now: Date = new Date()): P
 
   // Failed scans are not counted: the merchant got nothing from them.
   const counted = { shopId: shop.id, createdAt: { gte: periodStart }, status: { not: "failed" } };
-  const [fullScans, areaScans, ai] = await Promise.all([
-    prisma.audit.count({ where: { ...counted, scope: "full" } }),
-    prisma.audit.count({ where: { ...counted, scope: { not: "full" } } }),
+  const [scans, ai] = await Promise.all([
+    prisma.audit.count({ where: counted }),
     prisma.aiUsage.aggregate({
       where: { shopId: shop.id, createdAt: { gte: periodStart } },
       _sum: { units: true },
@@ -213,16 +212,16 @@ export async function getShopUsage(shop: BillingShop, now: Date = new Date()): P
     plan: planOf(shop.plan),
     periodStart,
     resetsAt: nextPeriodStart(anchor, now),
-    usage: { fullScans, areaScans, aiExplanations: ai._sum.units ?? 0 },
+    usage: { scans, aiExplanations: ai._sum.units ?? 0 },
   };
 }
 
 export type ScanCheck = { allowed: true } | { allowed: false; message: string };
 
-export async function checkScanAllowed(shop: BillingShop, full: boolean): Promise<ScanCheck> {
+export async function checkScanAllowed(shop: BillingShop): Promise<ScanCheck> {
   const { plan, usage, resetsAt } = await getShopUsage(shop);
-  const result: Allowance = scanAllowance(plan, full, usage);
-  return result.allowed ? { allowed: true } : { allowed: false, message: scanLimitMessage(plan, full, resetsAt) };
+  const result: Allowance = scanAllowance(plan, usage);
+  return result.allowed ? { allowed: true } : { allowed: false, message: scanLimitMessage(plan, resetsAt) };
 }
 
 /** New AI explanations the shop may still generate this period. */

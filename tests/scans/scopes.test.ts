@@ -2,7 +2,14 @@ import { describe, it, expect } from "vitest";
 import { allRules, getRulesForPage, runRulesDetailed } from "../../app/rules";
 import { imageRules } from "../../app/rules/images";
 import { perfRules } from "../../app/rules/perf";
-import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, needsStorefront, type ScanScope } from "../../app/scans/scopes";
+import {
+  SCAN_SCOPES,
+  SCAN_SCOPE_ORDER,
+  isScanScope,
+  isSelectableScope,
+  needsStorefront,
+  type ScanScope,
+} from "../../app/scans/scopes";
 
 const IMAGE_RULE_IDS = ["img.alt", "img.size", "img.dims.large", "img.dims.small", "img.count", "img.ratio", "img.duplicate"];
 const pageRuleIds = (page: "homepage" | "collection" | "product") => getRulesForPage(page).map((r) => r.id);
@@ -35,20 +42,28 @@ describe("scan scopes", () => {
     }
   });
 
-  it("full scan runs everything, including speed and checkout", () => {
-    const full = SCAN_SCOPES.full;
-    expect([...allRules, ...perfRules].every((rule) => full.includesRule(rule.id))).toBe(true);
-    expect([full.performance, full.checkout, full.catalogImages]).toEqual([true, true, true]);
+  it("the areas together run every rule the scanner has", () => {
+    // Speed and checkout have their own area now that there is no full scan.
+    const scanned = [...allRules, ...perfRules].filter((rule) => rule.page !== "cart");
+    for (const rule of scanned) {
+      const owners = SCAN_SCOPE_ORDER.filter((scope) => SCAN_SCOPES[scope].includesRule(rule.id));
+      expect(owners, rule.id).toHaveLength(1);
+    }
+    expect(SCAN_SCOPES.speed.performance).toBe(true);
+    expect(SCAN_SCOPES.checkout.checkout).toBe(true);
   });
 
   it("only page scans need the storefront password", () => {
-    expect(SCAN_SCOPE_ORDER.filter(needsStorefront)).toEqual(["full", "homepage", "product", "collection", "seo"]);
+    expect(SCAN_SCOPE_ORDER.filter(needsStorefront)).toEqual(["homepage", "product", "collection", "seo"]);
   });
 
-  it("rejects unknown scope names from the form", () => {
-    expect(isScanScope("images")).toBe(true);
-    expect(isScanScope("toString")).toBe(false);
-    expect(isScanScope("everything")).toBe(false);
+  it("rejects unknown scope names, and the retired full scan, from the form", () => {
+    expect(isSelectableScope("images")).toBe(true);
+    expect(isSelectableScope("toString")).toBe(false);
+    expect(isSelectableScope("everything")).toBe(false);
+    // Old scans still read back as "Full scan", but none can be requested.
+    expect(isScanScope("full")).toBe(true);
+    expect(isSelectableScope("full")).toBe(false);
   });
 
   it("every page rule reports findings under its own rule id", () => {

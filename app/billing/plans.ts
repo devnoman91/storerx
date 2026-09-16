@@ -14,10 +14,8 @@
 export type PlanKey = "free" | "starter" | "growth" | "pro";
 
 export interface PlanLimits {
-  /** Full scans per usage period. null = unlimited. */
-  fullScans: number | null;
-  /** Single-area scans (homepage, SEO, images…) per usage period. null = unlimited. */
-  areaScans: number | null;
+  /** Scans per usage period, of any area. null = unlimited. */
+  scans: number | null;
   /** New AI explanations per usage period. Always capped, to protect margins. */
   aiExplanations: number;
 }
@@ -45,32 +43,32 @@ export const PLANS: Record<PlanKey, PlanSpec> = {
     label: "Free",
     price: 0,
     summary: "See where your store loses sales",
-    features: ["1 full scan a month", "5 single-area scans a month", "5 AI explanations a month"],
-    limits: { fullScans: 1, areaScans: 5, aiExplanations: 5 },
+    features: ["8 scans a month — one of every area", "5 AI explanations a month"],
+    limits: { scans: 8, aiExplanations: 5 },
   },
   starter: {
     key: "starter",
     label: "Starter",
     price: 19,
     summary: "Weekly check-ups for a growing store",
-    features: ["4 full scans a month (weekly)", "30 single-area scans a month", "100 AI explanations a month"],
-    limits: { fullScans: 4, areaScans: 30, aiExplanations: 100 },
+    features: ["60 scans a month — every area, weekly", "100 AI explanations a month"],
+    limits: { scans: 60, aiExplanations: 100 },
   },
   growth: {
     key: "growth",
     label: "Growth",
     price: 49,
     summary: "Scan as often as you change your store",
-    features: ["Unlimited full scans", "Unlimited single-area scans", "500 AI explanations a month"],
-    limits: { fullScans: null, areaScans: null, aiExplanations: 500 },
+    features: ["Unlimited scans", "500 AI explanations a month"],
+    limits: { scans: null, aiExplanations: 500 },
   },
   pro: {
     key: "pro",
     label: "Pro",
     price: 99,
     summary: "For high-volume stores and agencies",
-    features: ["Unlimited full scans", "Unlimited single-area scans", "2,000 AI explanations a month", "Priority support"],
-    limits: { fullScans: null, areaScans: null, aiExplanations: 2000 },
+    features: ["Unlimited scans", "2,000 AI explanations a month", "Priority support"],
+    limits: { scans: null, aiExplanations: 2000 },
   },
 };
 
@@ -146,25 +144,20 @@ export function allowance(used: number, limit: number | null): Allowance {
 }
 
 export interface PeriodUsage {
-  fullScans: number;
-  areaScans: number;
+  scans: number;
   aiExplanations: number;
 }
 
-/** Whether a new scan of this kind fits the plan. */
-export function scanAllowance(plan: PlanSpec, full: boolean, usage: PeriodUsage): Allowance {
-  return full
-    ? allowance(usage.fullScans, plan.limits.fullScans)
-    : allowance(usage.areaScans, plan.limits.areaScans);
+/** Whether another scan fits the plan. */
+export function scanAllowance(plan: PlanSpec, usage: PeriodUsage): Allowance {
+  return allowance(usage.scans, plan.limits.scans);
 }
 
 /** Message shown when a scan is refused, naming the limit and when it resets. */
-export function scanLimitMessage(plan: PlanSpec, full: boolean, resetsAt: Date): string {
-  const limit = full ? plan.limits.fullScans : plan.limits.areaScans;
-  const kind = full ? "full" : "single-area";
+export function scanLimitMessage(plan: PlanSpec, resetsAt: Date): string {
   return (
-    `You've used all ${limit} ${kind} ${limit === 1 ? "scan" : "scans"} on the ${plan.label} plan ` +
-    `this month. It resets on ${resetsAt.toDateString()}, or upgrade for more.`
+    `You've used all ${plan.limits.scans} scans on the ${plan.label} plan this month. ` +
+    `They reset on ${resetsAt.toDateString()}, or upgrade for more.`
   );
 }
 

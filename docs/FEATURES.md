@@ -70,21 +70,29 @@ Severity weights: high = 10, medium = 5, low = 2.
 
 Score history is stored per audit → **trend graph** over time (weekly audit tier).
 
-**Scan areas.** Merchants can run a full scan or scan one area on its own
-(`app/scans/scopes.ts`), so time and AI credits go only where they ask:
+**Scan areas.** The store is scanned one area at a time (`app/scans/scopes.ts`),
+never all at once, so time and AI credits go only where the merchant asks.
+Between them the areas cover every rule, each rule in exactly one area:
 
 | Scan | Fetches | Rules |
 |---|---|---|
-| Full | Pages, catalog images, PageSpeed, checkout | Everything |
 | Homepage | Homepage | `home.*` |
 | Product pages | 5 sampled products | `prod.*` except SEO |
 | Collections | 3 largest collections | `coll.*` except SEO |
 | SEO | Products + collections | `prod.seo.title`, `prod.seo.meta`, `prod.schema`, `coll.description` |
 | Images | Catalog metadata (Admin API) | `img.*` except alt text |
 | Alt text | Catalog metadata (Admin API) | `img.alt` |
+| Speed | PageSpeed Insights | `perf.*` |
+| Checkout | Checkout settings (Admin API) | `chk.*` |
 
-Image and alt-text scans never need the storefront password. Only the full scan
-produces store-wide scores; a partial scan doesn't see enough of the store.
+Only page and SEO scans need the storefront password; a Speed scan fails with a
+clear message on a locked store, since PageSpeed can only see the lock screen.
+Store-wide scores are recomputed from the shop's open issues after every scan
+(`app/issues/store.server.ts`), and the last measured speed score carries over
+until the next Speed scan, so an area scan still moves the store score.
+
+`"full"` remains a valid stored scope so scans recorded before per-area
+scanning still read back, but it can no longer be requested.
 
 **Issue list.** The store's current state is the `Issue` table, not "the latest
 scan" — with partial scans, a homepage scan must not hide product issues. Every
@@ -299,12 +307,12 @@ All blocks: lightweight, no external JS libs, < 10 KB, lazy where possible (must
 
 ## 11. Plans & Billing (Shopify Billing API)
 
-| Plan | Price | Full scans / month | Area scans / month | AI explanations / month |
-|---|---|---|---|---|
-| Free | $0 | 1 | 5 | 5 |
-| Starter | $19 / 30 days | 4 (weekly) | 30 | 100 |
-| Growth | $49 / 30 days | Unlimited | Unlimited | 500 |
-| Pro | $99 / 30 days | Unlimited | Unlimited | 2,000 + priority support |
+| Plan | Price | Scans / month | AI explanations / month |
+|---|---|---|---|
+| Free | $0 | 8 — one of every area | 5 |
+| Starter | $19 / 30 days | 60 — every area, weekly | 100 |
+| Growth | $49 / 30 days | Unlimited | 500 |
+| Pro | $99 / 30 days | Unlimited | 2,000 + priority support |
 
 Later plan features (product copy fixes, image compression, vision scan, multi-store) are added to these tiers as they ship.
 
@@ -312,7 +320,7 @@ Later plan features (product copy fixes, image compression, vision scan, multi-s
 - Paid plans are recurring app subscriptions with a 7-day trial, named "StoreRx Starter/Growth/Pro". Development stores get test charges automatically (`shop.plan.partnerDevelopment`); `SHOPIFY_BILLING_TEST=true` forces test charges.
 - `Shop.plan`, `subscriptionId` and `subscriptionStatus` mirror Shopify. Kept current by the `app_subscriptions/update` webhook (a cancellation only downgrades if it is for the current subscription, so plan switches arriving out of order are safe), re-synced from `billing.check` on every Billing page load, and reset to Free on uninstall.
 - Usage is counted over a rolling 30-day period anchored at the last plan change: scans from `Audit` rows (failed scans not counted), AI explanations from `AiUsage.units`. No reset job.
-- Scan limits are enforced when a scan is requested (a repeat request for a queued area is free). AI limits are enforced in the worker before generating; issues past the limit show without prose and are explained on a later scan.
+- Every scan counts the same, whichever area it checks. Limits are enforced when a scan is requested (a repeat request for a queued area is free). AI limits are enforced in the worker before generating; issues past the limit show without prose and are explained on a later scan.
 - Billing requires Public distribution. Until then the Billing page shows that paid plans are unavailable and everyone is on Free.
 
 ---|---|---|

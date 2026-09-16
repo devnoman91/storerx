@@ -15,6 +15,7 @@ import {
   startsNewPeriod,
   type ShopBillingState,
 } from "../../app/billing/plans";
+import { SCAN_SCOPE_ORDER } from "../../app/scans/scopes";
 
 const DAY = 24 * 60 * 60 * 1000;
 const free: ShopBillingState = { plan: "free", subscriptionId: null, subscriptionStatus: null };
@@ -40,8 +41,7 @@ describe("plans", () => {
     const size = (n: number | null) => (n === null ? Infinity : n);
     for (let i = 1; i < order.length; i++) {
       expect(order[i].price).toBeGreaterThan(order[i - 1].price);
-      expect(size(order[i].limits.fullScans)).toBeGreaterThanOrEqual(size(order[i - 1].limits.fullScans));
-      expect(size(order[i].limits.areaScans)).toBeGreaterThanOrEqual(size(order[i - 1].limits.areaScans));
+      expect(size(order[i].limits.scans)).toBeGreaterThanOrEqual(size(order[i - 1].limits.scans));
       expect(order[i].limits.aiExplanations).toBeGreaterThanOrEqual(order[i - 1].limits.aiExplanations);
     }
   });
@@ -62,15 +62,17 @@ describe("usage periods", () => {
 });
 
 describe("scan limits", () => {
-  it("blocks a full scan on Free once the monthly one is used, but still allows area scans", () => {
-    const usage = { fullScans: 1, areaScans: 0, aiExplanations: 0 };
-    expect(scanAllowance(PLANS.free, true, usage).allowed).toBe(false);
-    expect(scanAllowance(PLANS.free, false, usage).allowed).toBe(true);
+  it("blocks another scan on Free once the month's scans are used", () => {
+    expect(scanAllowance(PLANS.free, { scans: PLANS.free.limits.scans!, aiExplanations: 0 }).allowed).toBe(false);
+    expect(scanAllowance(PLANS.free, { scans: 0, aiExplanations: 0 }).allowed).toBe(true);
+  });
+
+  it("gives Free enough scans to cover every area once", () => {
+    expect(PLANS.free.limits.scans).toBeGreaterThanOrEqual(SCAN_SCOPE_ORDER.length);
   });
 
   it("never blocks unlimited plans", () => {
-    const usage = { fullScans: 500, areaScans: 500, aiExplanations: 0 };
-    expect(scanAllowance(PLANS.growth, true, usage)).toMatchObject({ allowed: true, remaining: Infinity });
+    expect(scanAllowance(PLANS.growth, { scans: 500, aiExplanations: 0 })).toMatchObject({ allowed: true, remaining: Infinity });
   });
 
   it("does not report negative remaining allowance", () => {

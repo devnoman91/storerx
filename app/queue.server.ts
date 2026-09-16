@@ -37,7 +37,7 @@ export interface ClaimedAudit {
  */
 export async function enqueueAudit(
   shopId: string,
-  scope: ScanScope = "full",
+  scope: ScanScope,
 ): Promise<{ id: string; created: boolean }> {
   // One queued scan per area: a double-click cannot queue the same scan twice,
   // but a homepage scan and an images scan can both wait their turn.

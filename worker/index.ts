@@ -170,7 +170,7 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
   const { admin } = await unauthenticated.admin(shopDomain);
   const shopData = await collectAdminData(admin);
 
-  const scope: ScanScope = isScanScope(claimed.scope) ? claimed.scope : "full";
+  const scope: ScanScope = isScanScope(claimed.scope) ? claimed.scope : "homepage";
   const spec = SCAN_SCOPES[scope];
 
   // Only scans that read storefront pages need to get past the password page;
@@ -204,7 +204,7 @@ async function runAudit(claimed: ClaimedAudit): Promise<void> {
     evaluatedRules: result.evaluatedRules,
     scannedUrls: result.scannedUrls,
     pageResults: result.pageResults,
-    scores: result.scores,
+    performanceScore: result.performanceScore,
     completedAt: result.completedAt,
     explanations,
     targetTitles: buildTargetTitles(shopData),

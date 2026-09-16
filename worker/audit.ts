@@ -7,7 +7,8 @@
  * actually checked. Never runs inside HTTP request handlers.
  *
  * Pages are sampled, not crawled: the homepage, the 3 largest collections and
- * 5 products.
+ * 5 products. Store scores are not computed here; they are recomputed from
+ * the shop's open issues when the scan is recorded (app/issues/store.server.ts).
  */
 
 import {
@@ -20,9 +21,10 @@ import {
 } from "../app/rules";
 import type { CatalogImages } from "../app/collectors/images";
 import { SCAN_SCOPES, type ScanScope, type StorefrontArea } from "../app/scans/scopes";
-import { calculateScore, calculateStoreHealth } from "../app/scoring";
+import { calculateScore } from "../app/scoring";
 import { buildAuditPageList, closeBrowser, collectStorefrontPage } from "../app/collectors/storefront";
 import { runLighthouseAudit, type LighthouseResult } from "../app/collectors/lighthouse";
+import { NonRetryableError } from "../app/errors";
 
 export interface AuditJobData {
   shopDomain: string;
@@ -30,20 +32,10 @@ export interface AuditJobData {
   scope: ScanScope;
 }
 
-export interface AuditScores {
-  overall: number;
-  conversion: number;
-  ux: number;
-  /** null when Lighthouse did not run. */
-  performance: number | null;
-  seo: number;
-  productPages: number;
-}
-
 export interface AuditJobResult {
   findings: Finding[];
-  /** Store-wide scores. Only a full scan sees enough of the store to score it. */
-  scores: AuditScores | null;
+  /** Lighthouse score, when this scan measured one. */
+  performanceScore: number | null;
   pageResults: Array<{
     url: string;
     pageType: PageType;
@@ -168,20 +160,24 @@ export async function processAuditJob(
       );
     }
 
-    // Performance (full scan only). PageSpeed runs on Google's servers and
-    // cannot use our storefront login, so on a password-protected store it
-    // would only measure the lock screen — leave performance unmeasured.
+    // PageSpeed runs on Google's servers and cannot use our storefront login,
+    // so a password-protected store can only ever be measured as its lock
+    // screen. Say so rather than reporting a meaningless speed score.
     let lighthouse: LighthouseResult = { combinedScore: null };
     if (spec.performance) {
       progress("Running performance audit");
-      if (!shopData.passwordProtected) {
-        lighthouse = await runLighthouseAudit({
-          url: homepageUrl,
-          mobile: true,
-          // Desktop doubles the PSI calls; without a key the unkeyed quota trips.
-          desktop: Boolean(process.env.PAGESPEED_API_KEY),
-        });
+      if (shopData.passwordProtected) {
+        throw new NonRetryableError(
+          "Google PageSpeed can only measure a storefront that is open to the public, and yours " +
+            "is password-protected. Remove the storefront password, then run the speed scan again.",
+        );
       }
+      lighthouse = await runLighthouseAudit({
+        url: homepageUrl,
+        mobile: true,
+        // Desktop doubles the PSI calls; without a key the unkeyed quota trips.
+        desktop: Boolean(process.env.PAGESPEED_API_KEY),
+      });
       if (lighthouse.mobile) {
         const run = runRulesDetailed("perf", { html: "", shopData, lighthouse: lighthouse.mobile }, include);
         run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
@@ -196,11 +192,7 @@ export async function processAuditJob(
         const home = pageResults.find((p) => p.pageType === "homepage");
         if (home) home.perfScore = lighthouse.combinedScore;
       } else {
-        console.warn(
-          shopData.passwordProtected
-            ? "[audit] storefront is password-protected — PageSpeed skipped, performance unmeasured"
-            : "[audit] Lighthouse unavailable — performance left unmeasured",
-        );
+        console.warn("[audit] Lighthouse unavailable — performance left unmeasured");
       }
     }
 
@@ -214,7 +206,7 @@ export async function processAuditJob(
     progress("Analyzing results");
     return {
       findings,
-      scores: scope === "full" ? scoreStore(findings, lighthouse) : null,
+      performanceScore: lighthouse.combinedScore,
       pageResults,
       evaluatedRules: [...evaluated],
       scannedUrls,
@@ -226,20 +218,4 @@ export async function processAuditJob(
   } finally {
     await closeBrowser();
   }
-}
-
-function scoreStore(findings: Finding[], lighthouse: LighthouseResult): AuditScores {
-  // Performance comes from Lighthouse, not the perf findings, so `overall`
-  // agrees with the performance score shown beside it.
-  const health = calculateStoreHealth(findings, { performanceScore: lighthouse.combinedScore });
-  const category = (name: string) => health.categories.find((c) => c.category === name);
-  const performance = category("performance");
-  return {
-    overall: health.overall,
-    conversion: category("conversion")?.score ?? 0,
-    ux: category("ux")?.score ?? 0,
-    performance: performance?.measured ? performance.score : null,
-    seo: category("seo")?.score ?? 0,
-    productPages: category("productPages")?.score ?? 0,
-  };
 }

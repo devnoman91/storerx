@@ -14,16 +14,16 @@ const SETUP_STEPS: { title: string; items: string[] }[] = [
   {
     title: "Run your first scan",
     items: [
-      "Open Dashboard and choose Run full scan. It checks your homepage, top collections, top products, SEO, images, speed and checkout settings.",
-      "A full scan takes a few minutes. You can leave the page — results appear when it finishes.",
-      "Issues are grouped into Fix Now, Improvements and Minor, with what each one affects.",
+      "Open Dashboard and pick an area to scan: homepage, product pages, collections, SEO, images, alt text, speed or checkout.",
+      "A scan takes a minute or two. You can leave the page — results appear when it finishes.",
+      "Issues are grouped into Fix Now, Improvements and Minor, with what each one affects. Scan each area once to see the whole store.",
     ],
   },
   {
-    title: "Re-check one area at a time",
+    title: "Re-check after a fix",
     items: [
-      "After you fix something, scan just that area (homepage, product pages, collections, SEO, images or alt text).",
-      "An area scan is faster and only updates issues in that area. Fixed issues move to Fixed in the last 14 days.",
+      "After you fix something, scan just the area you changed.",
+      "A scan only updates issues in its own area, so nothing else is disturbed. Fixed issues move to Fixed in the last 14 days.",
       "History lists every scan with its score, new issues and fixed issues.",
     ],
   },
@@ -43,8 +43,8 @@ const FAQS: [string, string][] = [
     "No. Scans only read your store. StoreRx blocks appear on your storefront only when you add them in the theme editor, and your theme files are never edited.",
   ],
   [
-    "Why does performance say not measured?",
-    "Speed is measured with Google PageSpeed, which can't get past a storefront password. Remove the password, or run a full scan once your store is live.",
+    "Why can't StoreRx measure my speed?",
+    "Speed is measured with Google PageSpeed, which can't get past a storefront password. Remove the password, then run the Speed scan.",
   ],
   [
     "I fixed an issue but it's still listed. Why?",

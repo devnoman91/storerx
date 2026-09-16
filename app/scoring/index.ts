@@ -5,8 +5,18 @@
  * Severity weights: high = 10, medium = 5, low = 2.
  */
 
-import type { Finding, PageType } from "../rules/types";
+import type { PageType, Severity } from "../rules/types";
 import { SEVERITY_WEIGHTS } from "../rules/types";
+
+/**
+ * The only parts of a finding scoring uses. Lets the store score be computed
+ * from the shop's open issue rows, not just from one scan's findings.
+ */
+export interface ScorableIssue {
+  ruleId: string;
+  severity: Severity;
+  page: PageType | string;
+}
 
 export type ScoreCategory = "conversion" | "ux" | "performance" | "seo" | "productPages";
 
@@ -84,7 +94,7 @@ export function collapseByRule<T extends { ruleId: string }>(findings: T[]): T[]
 /**
  * Calculate score for a single category based on findings
  */
-function calculateCategoryScore(findings: Finding[]): CategoryScore {
+function calculateCategoryScore(findings: ScorableIssue[]): CategoryScore {
   const counts = { high: 0, medium: 0, low: 0 };
 
   for (const finding of findings) {
@@ -127,11 +137,11 @@ export interface StoreHealthOptions {
  * Calculate full store health score from all findings
  */
 export function calculateStoreHealth(
-  findings: Finding[],
+  findings: ScorableIssue[],
   options: StoreHealthOptions = {},
 ): StoreHealthScore {
   // Group findings by category
-  const byCategory: Record<ScoreCategory, Finding[]> = {
+  const byCategory: Record<ScoreCategory, ScorableIssue[]> = {
     conversion: [],
     ux: [],
     performance: [],
@@ -141,7 +151,7 @@ export function calculateStoreHealth(
 
   const prescriptions = collapseByRule(findings);
   for (const finding of prescriptions) {
-    const category = PAGE_TO_CATEGORY[finding.page];
+    const category = PAGE_TO_CATEGORY[finding.page as PageType] ?? "conversion";
     byCategory[category].push(finding);
   }
 
@@ -195,7 +205,7 @@ export function getScoreBand(score: number): "critical" | "warning" | "success" 
  * Simple score calculation from findings
  * Returns 0-100 based on severity weights
  */
-export function calculateScore(findings: Finding[]): number {
+export function calculateScore(findings: ScorableIssue[]): number {
   const penalty = findings.reduce((sum, f) => sum + SEVERITY_WEIGHTS[f.severity], 0);
   return Math.max(0, Math.round(100 - Math.min(penalty, 100)));
 }
