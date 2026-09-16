@@ -57,11 +57,17 @@ model Shop {
   emailSummary  Boolean @default(true)
   excludedPaths String? // JSON array of paths to skip
 
-  // Plan and billing
+  // Plan and billing (app/billing/plans.ts). Limits come from the plan table;
+  // usage is counted from Audit and AiUsage rows since the period start.
   plan               String    @default("free") // free, starter, growth, pro
-  aiGenerationsUsed  Int       @default(0)
-  aiGenerationsLimit Int       @default(5) // Based on plan
+  subscriptionId     String? // Shopify AppSubscription GID of the paid plan
+  subscriptionStatus String? // ACTIVE, CANCELLED, FROZEN… as Shopify reports it
+  // Anchor of the rolling 30-day usage period; reset on every plan change.
   billingCycleStart  DateTime?
+  // Legacy counters, superseded by AiUsage.units. Kept so older deployments
+  // reading the table do not break mid-release.
+  aiGenerationsUsed  Int       @default(0)
+  aiGenerationsLimit Int       @default(5)
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -252,7 +258,12 @@ model AiUsage {
   // Cost estimate (in cents)
   estimatedCost Float?
 
+  // Plan allowance consumed by this call, e.g. explanations generated.
+  units Int @default(1)
+
   createdAt DateTime @default(now())
+
+  @@index([shopId, createdAt])
 }
 
 // Liveness signal from each running worker, so the dashboard can tell a scan

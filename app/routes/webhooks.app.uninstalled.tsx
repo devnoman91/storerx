@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { cancelQueuedAudits } from "../compliance.server";
+import { cancelQueuedAudits, endSubscription } from "../compliance.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, session, topic } = await authenticate.webhook(request);
@@ -18,6 +18,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // reinstall keeps its history. Queued scans are dropped now: the worker
   // could no longer authenticate for this store.
   await cancelQueuedAudits(shop);
+
+  // Shopify cancels app subscriptions on uninstall; a reinstall starts on Free.
+  await endSubscription(shop);
 
   return new Response();
 };

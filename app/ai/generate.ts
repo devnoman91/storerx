@@ -3,7 +3,7 @@
  *
  * All LLM calls go through this module.
  * Uses Structured Outputs (JSON schema) - never free-text parsing.
- * Never called inside HTTP request handlers - only in BullMQ workers.
+ * Never called inside HTTP request handlers - only in the worker.
  */
 
 import { z } from "zod";
@@ -123,14 +123,16 @@ function estimateCents(
 }
 
 /**
- * Log AI usage per shop for cost tracking, and count it against the shop's
- * plan allowance (FEATURES.md §11).
+ * Log AI usage per shop for cost tracking. `units` is how much plan allowance
+ * the call consumed (e.g. explanations generated) — limits are enforced from
+ * these rows by app/billing/billing.server.ts, before generating.
  */
 export async function logUsage(
   shopDomain: string,
   task: string,
   model: string,
-  usage: { promptTokens: number; completionTokens: number }
+  usage: { promptTokens: number; completionTokens: number },
+  units = 1,
 ): Promise<void> {
   const shop = await prisma.shop.findUnique({
     where: { domain: shopDomain },
@@ -138,34 +140,16 @@ export async function logUsage(
   });
   if (!shop) return;
 
-  await prisma.$transaction([
-    prisma.aiUsage.create({
-      data: {
-        shopId: shop.id,
-        task,
-        model,
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        totalTokens: usage.promptTokens + usage.completionTokens,
-        estimatedCost: estimateCents(model, usage),
-      },
-    }),
-    prisma.shop.update({
-      where: { id: shop.id },
-      data: { aiGenerationsUsed: { increment: 1 } },
-    }),
-  ]);
-}
-
-/**
- * Whether the shop has plan allowance left. Callers must check this *before*
- * generating — `logUsage` only counts what already happened.
- */
-export async function hasGenerationsRemaining(shopDomain: string): Promise<boolean> {
-  const shop = await prisma.shop.findUnique({
-    where: { domain: shopDomain },
-    select: { aiGenerationsUsed: true, aiGenerationsLimit: true },
+  await prisma.aiUsage.create({
+    data: {
+      shopId: shop.id,
+      task,
+      model,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      totalTokens: usage.promptTokens + usage.completionTokens,
+      estimatedCost: estimateCents(model, usage),
+      units,
+    },
   });
-  if (!shop) return false;
-  return shop.aiGenerationsUsed < shop.aiGenerationsLimit;
 }

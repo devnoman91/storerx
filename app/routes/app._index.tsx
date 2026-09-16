@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
+import { checkScanAllowed, getShopUsage } from "../billing/billing.server";
 import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, type ScanScope } from "../scans/scopes";
 import {
@@ -144,7 +145,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   await reapStaleAudits(shopId);
 
   const since = new Date(Date.now() - RECENTLY_FIXED_DAYS * 24 * 60 * 60 * 1000);
-  const [openIssues, fixedIssues, inFlight, latestScan, lastByScope, failedScan, fixCount] = await Promise.all([
+  const [openIssues, fixedIssues, inFlight, latestScan, lastByScope, failedScan, fixCount, planUsage] = await Promise.all([
     prisma.issue.findMany({ where: { shopId, status: "open" }, orderBy: { lastSeenAt: "desc" } }),
     prisma.issue.findMany({
       where: { shopId, status: "resolved", resolvedAt: { gte: since } },
@@ -171,6 +172,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       select: { error: true, createdAt: true, scope: true },
     }),
     prisma.fix.count({ where: { shopId, status: "applied" } }),
+    getShopUsage(shop),
   ]);
 
   const rows: IssueRow[] = openIssues
@@ -220,6 +222,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       };
     }),
     fullScanQueued: inFlight.some((audit) => audit.scope === "full"),
+    plan: {
+      label: planUsage.plan.label,
+      isFree: planUsage.plan.key === "free",
+      resetsAt: planUsage.resetsAt.toDateString(),
+      fullScans: { used: planUsage.usage.fullScans, limit: planUsage.plan.limits.fullScans },
+      areaScans: { used: planUsage.usage.areaScans, limit: planUsage.plan.limits.areaScans },
+      aiExplanations: { used: planUsage.usage.aiExplanations, limit: planUsage.plan.limits.aiExplanations },
+    },
     critical: prescriptions.filter((p) => p.severity === "high"),
     improvements: prescriptions.filter((p) => p.severity === "medium"),
     minor: prescriptions.filter((p) => p.severity === "low"),
@@ -247,7 +257,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     shop = await prisma.shop.create({ data: { domain: shopDomain } });
   }
 
-  // A single row insert; a repeat request for the same area joins the queued scan.
+  // A repeat request for an area already queued joins that scan, so it is not
+  // charged against the plan a second time.
+  const queued = await prisma.audit.findFirst({
+    where: { shopId: shop.id, scope: requested, status: { in: ["pending", "running"] } },
+    select: { id: true },
+  });
+  if (queued) return { ok: true, auditId: queued.id, alreadyQueued: true };
+
+  const allowed = await checkScanAllowed(shop, requested === "full");
+  if (!allowed.allowed) {
+    return { ok: false, error: allowed.message, limitReached: true };
+  }
+
+  // A single row insert.
   const { id, created } = await enqueueAudit(shop.id, requested);
   return { ok: true, auditId: id, alreadyQueued: !created };
 };
@@ -384,6 +407,37 @@ function AreasPanel({
             </s-stack>
           </s-stack>
         ))}
+      </s-stack>
+    </s-section>
+  );
+}
+
+type UsageCount = { used: number; limit: number | null };
+
+function usageText({ used, limit }: UsageCount): string {
+  return limit === null ? `${used} used · unlimited` : `${used} of ${limit} used`;
+}
+
+function PlanUsage({
+  plan,
+}: {
+  plan: {
+    label: string;
+    isFree: boolean;
+    resetsAt: string;
+    fullScans: UsageCount;
+    areaScans: UsageCount;
+    aiExplanations: UsageCount;
+  };
+}) {
+  return (
+    <s-section heading={`${plan.label} plan this month`}>
+      <s-stack direction="block" gap="small">
+        <s-text>Full scans: {usageText(plan.fullScans)}</s-text>
+        <s-text>Single-area scans: {usageText(plan.areaScans)}</s-text>
+        <s-text>AI explanations: {usageText(plan.aiExplanations)}</s-text>
+        <s-text color="subdued">Resets on {plan.resetsAt}.</s-text>
+        <s-link href="/app/billing">{plan.isFree ? "Upgrade for more scans" : "Manage plan"}</s-link>
       </s-stack>
     </s-section>
   );
@@ -608,6 +662,13 @@ export default function Dashboard() {
         {data.fullScanQueued ? "Full scan queued" : "Run full scan"}
       </s-button>
 
+      {fetcher.data && !fetcher.data.ok && (
+        <s-banner tone={"limitReached" in fetcher.data ? "warning" : "critical"} heading="Scan not started">
+          {fetcher.data.error}{" "}
+          {"limitReached" in fetcher.data && <s-link href="/app/billing">See plans</s-link>}
+        </s-banner>
+      )}
+
       {!isScanning && data.failedError && (
         <s-banner tone="critical" heading="Last scan failed">
           {data.failedError}
@@ -714,6 +775,8 @@ export default function Dashboard() {
       )}
 
       <AreasPanel areas={data.areas} busy={isSubmitting} onScan={startScan} />
+
+      <PlanUsage plan={data.plan} />
 
       <div style={{
         display: "flex",

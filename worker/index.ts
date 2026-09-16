@@ -28,6 +28,8 @@ import { collectCatalogImages } from "../app/collectors/images";
 import { NonRetryableError, StorefrontLockedError } from "../app/errors";
 import { EXPLAIN_PROMPT_VERSION, explainFindings } from "../app/ai/prompts";
 import { logUsage } from "../app/ai/generate";
+import { aiExplanationsRemaining } from "../app/billing/billing.server";
+import type { Shop } from "@prisma/client";
 import { SEVERITY_WEIGHTS, type Finding, type ShopData } from "../app/rules/types";
 import { processAuditJob, type AuditProgress } from "./audit";
 import { recordScan } from "../app/issues/store.server";
@@ -81,7 +83,7 @@ function buildTargetTitles(shopData: ShopData): Map<string, string> {
  */
 async function explainWithCache(
   findings: Finding[],
-  shop: { id: string; domain: string; name: string | null; brandVoice: string | null },
+  shop: Shop,
 ): Promise<{ explanations: Map<string, Explanation>; generated: number; reused: number }> {
   // One entry per rule: the explanation is the same wherever the rule fired.
   const byRule = new Map<string, Finding>();
@@ -103,10 +105,18 @@ async function explainWithCache(
   const explanations = new Map(hits);
   if (misses.length === 0) return { explanations, generated: 0, reused: hits.size };
 
+  // Plan allowance (FEATURES.md §11). Findings past it still show, with the
+  // rule's own wording, and are explained once allowance is available again.
+  const remaining = await aiExplanationsRemaining(shop);
+  if (remaining === 0) {
+    console.log(`[worker] ${shop.domain} has no AI explanations left this period; ${misses.length} rule(s) unexplained`);
+    return { explanations, generated: 0, reused: hits.size };
+  }
+
   const toExplain = misses
     .map((ruleId) => byRule.get(ruleId)!)
     .sort((a, b) => SEVERITY_WEIGHTS[b.severity] - SEVERITY_WEIGHTS[a.severity])
-    .slice(0, MAX_EXPLAINED_RULES);
+    .slice(0, Math.min(MAX_EXPLAINED_RULES, remaining));
   const requested = new Set(toExplain.map((finding) => finding.ruleId));
 
   try {
@@ -133,7 +143,7 @@ async function explainWithCache(
         }),
       ),
     );
-    await logUsage(shop.domain, "explain", "gpt-4.1-mini", result.usage);
+    await logUsage(shop.domain, "explain", "gpt-4.1-mini", result.usage, fresh.length);
     return { explanations, generated: fresh.length, reused: hits.size };
   } catch (error) {
     // An audit is still useful without prose — findings come from the rules.

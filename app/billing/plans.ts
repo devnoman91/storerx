@@ -1,0 +1,279 @@
+/**
+ * Plans, limits and subscription state (FEATURES.md §11).
+ *
+ * Pure functions only, so the rules that decide what a merchant can do are
+ * unit-tested without Shopify or a database. Shopify billing calls live in
+ * app/billing/billing.server.ts.
+ *
+ * Limits are counted over a rolling 30-day usage period that restarts when the
+ * merchant changes plan. Scan limits protect PageSpeed quota and worker time;
+ * AI limits protect OpenAI spend. Explanations are cached per rule, so a store
+ * only spends AI credits on rules it has not had explained before.
+ */
+
+export type PlanKey = "free" | "starter" | "growth" | "pro";
+
+export interface PlanLimits {
+  /** Full scans per usage period. null = unlimited. */
+  fullScans: number | null;
+  /** Single-area scans (homepage, SEO, images…) per usage period. null = unlimited. */
+  areaScans: number | null;
+  /** New AI explanations per usage period. Always capped, to protect margins. */
+  aiExplanations: number;
+}
+
+export interface PlanSpec {
+  key: PlanKey;
+  label: string;
+  /** USD per 30 days. */
+  price: number;
+  summary: string;
+  features: string[];
+  limits: PlanLimits;
+}
+
+/** Days of free trial Shopify gives on a paid plan before the first charge. */
+export const TRIAL_DAYS = 7;
+
+export const USAGE_PERIOD_DAYS = 30;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const PLANS: Record<PlanKey, PlanSpec> = {
+  free: {
+    key: "free",
+    label: "Free",
+    price: 0,
+    summary: "See where your store loses sales",
+    features: ["1 full scan a month", "5 single-area scans a month", "5 AI explanations a month"],
+    limits: { fullScans: 1, areaScans: 5, aiExplanations: 5 },
+  },
+  starter: {
+    key: "starter",
+    label: "Starter",
+    price: 19,
+    summary: "Weekly check-ups for a growing store",
+    features: ["4 full scans a month (weekly)", "30 single-area scans a month", "100 AI explanations a month"],
+    limits: { fullScans: 4, areaScans: 30, aiExplanations: 100 },
+  },
+  growth: {
+    key: "growth",
+    label: "Growth",
+    price: 49,
+    summary: "Scan as often as you change your store",
+    features: ["Unlimited full scans", "Unlimited single-area scans", "500 AI explanations a month"],
+    limits: { fullScans: null, areaScans: null, aiExplanations: 500 },
+  },
+  pro: {
+    key: "pro",
+    label: "Pro",
+    price: 99,
+    summary: "For high-volume stores and agencies",
+    features: ["Unlimited full scans", "Unlimited single-area scans", "2,000 AI explanations a month", "Priority support"],
+    limits: { fullScans: null, areaScans: null, aiExplanations: 2000 },
+  },
+};
+
+export const PLAN_ORDER: PlanKey[] = ["free", "starter", "growth", "pro"];
+
+export type PaidPlanKey = Exclude<PlanKey, "free">;
+
+export const PAID_PLANS: PaidPlanKey[] = ["starter", "growth", "pro"];
+
+/**
+ * Names registered in the Shopify billing config. The name is what merchants
+ * see on the approval screen and their invoice, and what Shopify sends back in
+ * billing.check and app_subscriptions/update.
+ */
+export const SHOPIFY_PLAN_NAMES: Record<PaidPlanKey, string> = {
+  starter: "StoreRx Starter",
+  growth: "StoreRx Growth",
+  pro: "StoreRx Pro",
+};
+
+export function isPlanKey(value: unknown): value is PlanKey {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(PLANS, value);
+}
+
+export function isPaidPlanKey(value: unknown): value is PaidPlanKey {
+  return isPlanKey(value) && value !== "free";
+}
+
+/** Plan stored on the shop, tolerating unknown legacy values. */
+export function planOf(value: string | null | undefined): PlanSpec {
+  return isPlanKey(value) ? PLANS[value] : PLANS.free;
+}
+
+/** Map a Shopify subscription name back to a plan. Unknown names map to null. */
+export function planFromSubscriptionName(name: string | null | undefined): PaidPlanKey | null {
+  if (!name) return null;
+  const wanted = name.trim().toLowerCase();
+  for (const key of PAID_PLANS) {
+    if (SHOPIFY_PLAN_NAMES[key].toLowerCase() === wanted) return key;
+  }
+  return null;
+}
+
+/**
+ * Start of the usage period containing `now`. Periods run back to back in
+ * 30-day steps from `anchor` (the last plan change, or install), so usage
+ * resets on its own without a scheduled job.
+ */
+export function currentPeriodStart(anchor: Date, now: Date = new Date()): Date {
+  const elapsed = now.getTime() - anchor.getTime();
+  if (elapsed <= 0) return anchor;
+  const periods = Math.floor(elapsed / (USAGE_PERIOD_DAYS * DAY_MS));
+  return new Date(anchor.getTime() + periods * USAGE_PERIOD_DAYS * DAY_MS);
+}
+
+export function nextPeriodStart(anchor: Date, now: Date = new Date()): Date {
+  return new Date(currentPeriodStart(anchor, now).getTime() + USAGE_PERIOD_DAYS * DAY_MS);
+}
+
+export interface Allowance {
+  used: number;
+  /** null = unlimited. */
+  limit: number | null;
+  /** Infinity when unlimited. */
+  remaining: number;
+  allowed: boolean;
+}
+
+export function allowance(used: number, limit: number | null): Allowance {
+  if (limit === null) return { used, limit, remaining: Infinity, allowed: true };
+  const remaining = Math.max(0, limit - used);
+  return { used, limit, remaining, allowed: remaining > 0 };
+}
+
+export interface PeriodUsage {
+  fullScans: number;
+  areaScans: number;
+  aiExplanations: number;
+}
+
+/** Whether a new scan of this kind fits the plan. */
+export function scanAllowance(plan: PlanSpec, full: boolean, usage: PeriodUsage): Allowance {
+  return full
+    ? allowance(usage.fullScans, plan.limits.fullScans)
+    : allowance(usage.areaScans, plan.limits.areaScans);
+}
+
+/** Message shown when a scan is refused, naming the limit and when it resets. */
+export function scanLimitMessage(plan: PlanSpec, full: boolean, resetsAt: Date): string {
+  const limit = full ? plan.limits.fullScans : plan.limits.areaScans;
+  const kind = full ? "full" : "single-area";
+  return (
+    `You've used all ${limit} ${kind} ${limit === 1 ? "scan" : "scans"} on the ${plan.label} plan ` +
+    `this month. It resets on ${resetsAt.toDateString()}, or upgrade for more.`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Subscription state
+// ---------------------------------------------------------------------------
+
+export type SubscriptionStatus =
+  | "ACTIVE"
+  | "ACCEPTED"
+  | "PENDING"
+  | "CANCELLED"
+  | "DECLINED"
+  | "EXPIRED"
+  | "FROZEN";
+
+/** Billing fields stored on the Shop row. */
+export interface ShopBillingState {
+  plan: PlanKey;
+  subscriptionId: string | null;
+  subscriptionStatus: string | null;
+}
+
+export interface SubscriptionEvent {
+  id: string;
+  name: string;
+  status: string;
+}
+
+const ENDED_STATUSES: ReadonlySet<string> = new Set(["CANCELLED", "DECLINED", "EXPIRED", "FROZEN"]);
+const LIVE_STATUSES: ReadonlySet<string> = new Set(["ACTIVE", "ACCEPTED"]);
+
+/**
+ * Apply an app_subscriptions/update event. Returns the new billing state, or
+ * null when the event does not change what the shop is entitled to.
+ *
+ * Switching plans creates a new subscription and cancels the old one, and the
+ * two webhooks can arrive in either order — so a cancellation only downgrades
+ * the shop when it is for the subscription the shop is currently on.
+ */
+export function applySubscriptionEvent(
+  current: ShopBillingState,
+  event: SubscriptionEvent,
+): ShopBillingState | null {
+  const status = event.status.trim().toUpperCase();
+  const plan = planFromSubscriptionName(event.name);
+
+  if (LIVE_STATUSES.has(status)) {
+    if (!plan) return null; // not one of our plans
+    if (current.plan === plan && current.subscriptionId === event.id && current.subscriptionStatus === status) {
+      return null;
+    }
+    return { plan, subscriptionId: event.id, subscriptionStatus: status };
+  }
+
+  if (ENDED_STATUSES.has(status)) {
+    const isCurrent =
+      current.subscriptionId === event.id ||
+      // Plan set before the subscription id was recorded.
+      (current.subscriptionId === null && plan !== null && current.plan === plan);
+    if (!isCurrent) return null;
+    return { plan: "free", subscriptionId: null, subscriptionStatus: status };
+  }
+
+  // PENDING: the merchant has not approved it yet; nothing changes.
+  return null;
+}
+
+export interface ActiveSubscription {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/**
+ * Billing state from Shopify's own list of active subscriptions (billing.check).
+ * Authoritative: it corrects anything a missed webhook left behind.
+ */
+export function stateFromActiveSubscriptions(subscriptions: ActiveSubscription[]): ShopBillingState {
+  for (const subscription of subscriptions) {
+    const plan = planFromSubscriptionName(subscription.name);
+    if (plan && LIVE_STATUSES.has(subscription.status.toUpperCase())) {
+      return { plan, subscriptionId: subscription.id, subscriptionStatus: subscription.status.toUpperCase() };
+    }
+  }
+  return { plan: "free", subscriptionId: null, subscriptionStatus: null };
+}
+
+/** Whether moving between these states starts a new usage period. */
+export function startsNewPeriod(before: ShopBillingState, after: ShopBillingState): boolean {
+  return before.plan !== after.plan || before.subscriptionId !== after.subscriptionId;
+}
+
+/**
+ * Shopify refuses the Billing API for apps that are not publicly distributed
+ * (custom apps, or an app whose distribution is not chosen yet).
+ */
+export function isBillingUnavailableError(error: unknown): boolean {
+  const parts: string[] = [];
+  if (error instanceof Error) parts.push(error.message);
+  // BillingError carries userErrors in errorData; GraphqlQueryError in body.
+  const details = error as { errorData?: unknown; body?: unknown } | null;
+  for (const data of [details?.errorData, details?.body]) {
+    if (data === undefined) continue;
+    try {
+      parts.push(JSON.stringify(data));
+    } catch {
+      // ignore unserialisable error data
+    }
+  }
+  return /public distribution|custom app|cannot use the billing api|billing api is not available/i.test(parts.join(" "));
+}

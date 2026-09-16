@@ -32,7 +32,7 @@ export interface ShopRedaction {
 
 /**
  * Delete everything StoreRx holds for a shop. Deleting the Shop row cascades
- * to audits, findings, page scores, fixes and AI usage; sessions are keyed by
+ * to audits, findings, issues, fixes, AI usage and billing state; sessions are keyed by
  * domain rather than related, so they are removed explicitly.
  *
  * Idempotent: Shopify may deliver the same webhook more than once.
@@ -57,4 +57,16 @@ export async function cancelQueuedAudits(shopDomain: string): Promise<number> {
     data: { status: "failed", error: "App was uninstalled" },
   });
   return result.count;
+}
+
+/**
+ * Uninstalling cancels the app subscription on Shopify's side. Mirror that
+ * now rather than waiting for app_subscriptions/update, which Shopify may not
+ * deliver once the app is gone.
+ */
+export async function endSubscription(shopDomain: string): Promise<void> {
+  await prisma.shop.updateMany({
+    where: { domain: shopDomain, plan: { not: "free" } },
+    data: { plan: "free", subscriptionId: null, subscriptionStatus: "CANCELLED", billingCycleStart: new Date() },
+  });
 }

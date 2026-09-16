@@ -19,10 +19,15 @@ api_version = "2026-10"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
-  # Mandatory privacy compliance webhooks — required for App Store review.
-  # Handled by app/routes/webhooks.compliance.tsx.
+  # Plan approved, cancelled, frozen or expired. Keeps Shop.plan in step.
   [[webhooks.subscriptions]]
-  uri = "/webhooks/compliance"
+  uri = "/webhooks/app/subscriptions/update"
+  topics = [ "app_subscriptions/update" ]
+
+  # Mandatory privacy compliance webhooks — required for App Store review.
+  # Handled by app/routes/webhooks.gdpr.tsx.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/gdpr"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
 [auth]

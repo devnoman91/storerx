@@ -299,8 +299,23 @@ All blocks: lightweight, no external JS libs, < 10 KB, lazy where possible (must
 
 ## 11. Plans & Billing (Shopify Billing API)
 
-| Plan | Price | Includes |
-|---|---|---|
+| Plan | Price | Full scans / month | Area scans / month | AI explanations / month |
+|---|---|---|---|---|
+| Free | $0 | 1 | 5 | 5 |
+| Starter | $19 / 30 days | 4 (weekly) | 30 | 100 |
+| Growth | $49 / 30 days | Unlimited | Unlimited | 500 |
+| Pro | $99 / 30 days | Unlimited | Unlimited | 2,000 + priority support |
+
+Later plan features (product copy fixes, image compression, vision scan, multi-store) are added to these tiers as they ship.
+
+- Plans and limits live in `app/billing/plans.ts` (pure, unit-tested); Shopify calls in `app/billing/billing.server.ts`.
+- Paid plans are recurring app subscriptions with a 7-day trial, named "StoreRx Starter/Growth/Pro". Development stores get test charges automatically (`shop.plan.partnerDevelopment`); `SHOPIFY_BILLING_TEST=true` forces test charges.
+- `Shop.plan`, `subscriptionId` and `subscriptionStatus` mirror Shopify. Kept current by the `app_subscriptions/update` webhook (a cancellation only downgrades if it is for the current subscription, so plan switches arriving out of order are safe), re-synced from `billing.check` on every Billing page load, and reset to Free on uninstall.
+- Usage is counted over a rolling 30-day period anchored at the last plan change: scans from `Audit` rows (failed scans not counted), AI explanations from `AiUsage.units`. No reset job.
+- Scan limits are enforced when a scan is requested (a repeat request for a queued area is free). AI limits are enforced in the worker before generating; issues past the limit show without prose and are explained on a later scan.
+- Billing requires Public distribution. Until then the Billing page shows that paid plans are unavailable and everyone is on Free.
+
+---|---|---|
 | Free | $0 | 1 audit/month, 5 AI recommendations, alt text for 20 images |
 | Starter | $19/mo | Weekly audits, unlimited recommendations, product copy fixes, image compression |
 | Growth | $49/mo | Unlimited audits, all AI fixes, full-catalog vision scan, background removal, A/B test hints, conversion analytics |
