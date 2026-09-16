@@ -231,8 +231,13 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
         scorable,
         { performanceScore: scan.performanceScore ?? (await lastMeasuredSpeed(tx, shopId, auditId)) },
       );
-      const category = (name: string) => health.categories.find((c) => c.category === name);
-      const performance = category("performance");
+      // An unmeasured category is stored as null, never as a number. A zero
+      // would read as "this store scored nothing" instead of "nothing was
+      // measured", and the dashboard shows the two very differently.
+      const scoreOf = (name: string) => {
+        const category = health.categories.find((c) => c.category === name);
+        return category?.measured ? category.score : null;
+      };
 
       const prescriptions = collapseByRule(scan.findings);
       const counts = { high: 0, medium: 0, low: 0 };
@@ -245,11 +250,11 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
           progress: 100,
           currentStep: null,
           overallScore: health.overall,
-          conversionScore: category("conversion")?.score ?? null,
-          uxScore: category("ux")?.score ?? null,
-          performanceScore: performance?.measured ? performance.score : null,
-          seoScore: category("seo")?.score ?? null,
-          productPagesScore: category("productPages")?.score ?? null,
+          conversionScore: scoreOf("conversion"),
+          uxScore: scoreOf("ux"),
+          performanceScore: scoreOf("performance"),
+          seoScore: scoreOf("seo"),
+          productPagesScore: scoreOf("productPages"),
           totalIssues: prescriptions.length,
           highCount: counts.high,
           mediumCount: counts.medium,

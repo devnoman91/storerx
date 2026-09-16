@@ -6,7 +6,7 @@ import prisma from "../db.server";
 import { SCAN_SCOPES, isScanScope } from "../scans/scopes";
 import { SUGGESTION_LABELS } from "../remedies/actions";
 import type { SuggestionKind } from "../remedies/types";
-import { EmptyState } from "../components/issue-ui";
+import { StateCard } from "../components/primitives";
 
 /** Drafts shown before the list is truncated. */
 const DRAFT_LIMIT = 50;
@@ -69,9 +69,13 @@ function ScanHistory({ scans }: { scans: ScanRow[] }) {
   if (scans.length === 0) {
     return (
       <s-section heading="Scans">
-        <EmptyState heading="No scans yet" action={{ label: "Run your first scan", to: "/app" }}>
+        <StateCard
+          icon="search"
+          heading="No scans yet"
+          action={<s-button variant="primary" href="/app">Run your first scan</s-button>}
+        >
           Pick an area on the dashboard and StoreRx will check it.
-        </EmptyState>
+        </StateCard>
       </s-section>
     );
   }
@@ -130,10 +134,10 @@ function DraftHistory({ drafts }: { drafts: DraftRow[] }) {
   if (drafts.length === 0) {
     return (
       <s-section heading="Drafted copy">
-        <EmptyState heading="No copy drafted yet">
+        <StateCard icon="wand" heading="No copy drafted yet">
           When you ask StoreRx to draft alt text, an SEO title or a description, it appears here.
           StoreRx drafts it — you decide whether to use it.
-        </EmptyState>
+        </StateCard>
       </s-section>
     );
   }

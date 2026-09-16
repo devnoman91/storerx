@@ -14,7 +14,9 @@ import { actionsFor, OWNERSHIP, REMEDY_LABELS, type IssueStatus } from "../remed
 import { adminUrl } from "../remedies/links";
 import type { RemedyKind, SuggestionKind } from "../remedies/types";
 import { catalogTitle } from "../issues/wording";
-import { EmptyState, ImpactBadge, IssueStatusBadge, RemedyChip, pagePath } from "../components/issue-ui";
+import { ImpactBadge, IssueStatusBadge, RemedyChip, pagePath } from "../components/issue-ui";
+import { Callout, StateCard } from "../components/primitives";
+import { AREA_ICON, remedyToken, severityToken } from "../components/tokens";
 import {
   CopyButton,
   EvidencePanel,
@@ -215,6 +217,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   return { ok: false as const, error: `Unsupported action: ${String(intent)}` };
 };
 
+/** Plain-language name for the copy StoreRx drafts, used in the section intro. */
+const SUGGESTION_NOUN: Record<SuggestionKind, string> = {
+  alt_text: "alt text",
+  seo_title: "an SEO title",
+  seo_meta: "a meta description",
+  product_description: "a description",
+};
+
 export default function IssueDetail() {
   const data = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -247,6 +257,14 @@ export default function IssueDetail() {
     .join("\n");
 
   const creditsSpent = data.credits === 0;
+  const severity = severityToken(data.severity);
+  const remedy = remedyToken(data.remedy);
+  const locationLine =
+    data.items.length === 1
+      ? data.items[0].title
+      : data.catalog
+        ? `Found across ${data.items.length} items in your catalog`
+        : `Found on ${data.items.length} pages`;
 
   return (
     <s-page heading={data.title}>
@@ -288,22 +306,24 @@ export default function IssueDetail() {
         </s-banner>
       )}
 
-      <s-section>
+      {/* The page heading already carries the title, so the diagnosis section
+          adds what the heading cannot: how much it matters, where the work is
+          done, and what StoreRx actually saw. */}
+      <s-section heading="Diagnosis">
         <s-stack direction="block" gap="base">
-          <s-stack direction="inline" gap="small" alignItems="center">
+          <s-stack direction="inline" gap="small-300" alignItems="center">
             <ImpactBadge severity={data.severity} />
             <RemedyChip remedy={data.remedy} />
             {data.isNew && <s-badge tone="info">New</s-badge>}
             <IssueStatusBadge status={data.status} verificationFailed={data.verificationFailed} />
           </s-stack>
 
-          <s-text color="subdued">
-            {data.items.length === 1
-              ? data.items[0].title
-              : data.catalog
-                ? `Across ${data.items.length} items in your catalog`
-                : `On ${data.items.length} pages`}
-          </s-text>
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-icon type={severity.icon} tone={severity.tone} size="small" />
+            <s-text color="subdued">
+              {severity.blurb} · {locationLine}
+            </s-text>
+          </s-stack>
 
           <EvidencePanel evidenceValue={data.evidenceValue} pageUrl={data.singlePageUrl} />
         </s-stack>
@@ -313,53 +333,83 @@ export default function IssueDetail() {
         <s-stack direction="block" gap="large-100">
           <WhyItMatters text={data.explanation} />
           <RecommendedSolution text={data.recommendation} />
-          <ImplementationSteps steps={data.steps} ownership={data.ownership} />
+          <ImplementationSteps
+            steps={data.steps}
+            ownership={data.ownership}
+            verifyNote={
+              data.scope
+                ? `StoreRx will verify it on your next ${data.scope.label} scan.`
+                : undefined
+            }
+          />
 
-          <s-stack direction="inline" gap="small" alignItems="center">
-            {copyable && <CopyButton value={copyable} label="Copy recommendation" />}
+          <s-stack direction="inline" gap="small-300" alignItems="center">
             {data.destination?.href && (
-              <s-button variant="primary" href={data.destination.href}>
+              <s-button variant="primary" icon="external" href={data.destination.href}>
                 {data.destination.label}
               </s-button>
             )}
+            {copyable && <CopyButton value={copyable} label="Copy recommendation" />}
           </s-stack>
 
           {data.destination?.unavailable && (
-            <s-text color="subdued">{data.destination.unavailable}</s-text>
+            <Callout icon="alert-circle" tone="warning">
+              {data.destination.unavailable}
+            </Callout>
           )}
         </s-stack>
       </s-section>
 
       <s-section heading={`Where StoreRx found it (${data.items.length})`}>
-        {data.suggestionKind && (
+        {data.suggestionKind ? (
           <s-paragraph color="subdued">
-            StoreRx can draft copy for each of these. Review it, then paste it into Shopify
-            yourself — nothing is changed for you.
+            StoreRx can draft {SUGGESTION_NOUN[data.suggestionKind]} for each of these. Review it,
+            then paste it into Shopify yourself — nothing is changed for you.
           </s-paragraph>
+        ) : (
+          data.items.length > 1 && (
+            <s-paragraph color="subdued">
+              The same problem was found in each of these places.
+            </s-paragraph>
+          )
         )}
-        <s-stack direction="block" gap="large-100">
+
+        <s-stack direction="block" gap="small">
           {data.items.map((item) => (
             <s-box key={item.id} padding="base" background="subdued" borderRadius="base">
               <s-stack direction="block" gap="small">
-                <s-stack direction="inline" gap="small" alignItems="center">
-                  {item.imageUrl && (
-                    <s-thumbnail src={item.imageUrl} alt={item.title} size="base" />
-                  )}
-                  <s-stack direction="block" gap="small-500">
-                    {item.pageUrl ? (
-                      <s-link href={item.pageUrl} target="_blank">
-                        {item.title}
-                      </s-link>
-                    ) : (
-                      <s-text type="strong">{item.title}</s-text>
+                <s-stack
+                  direction="inline"
+                  gap="small"
+                  alignItems="center"
+                  justifyContent="space-between"
+                >
+                  <s-stack direction="inline" gap="small" alignItems="center">
+                    {item.imageUrl && (
+                      <s-thumbnail src={item.imageUrl} alt={item.title} size="base" />
                     )}
-                    {item.evidenceValue && (
-                      <s-text color="subdued">{item.evidenceValue}</s-text>
-                    )}
+                    <s-stack direction="block" gap="small-500">
+                      {item.pageUrl ? (
+                        <s-link href={item.pageUrl} target="_blank">
+                          {item.title}
+                        </s-link>
+                      ) : (
+                        <s-text type="strong">{item.title}</s-text>
+                      )}
+                      {item.evidenceValue && (
+                        <s-text color="subdued">{item.evidenceValue}</s-text>
+                      )}
+                    </s-stack>
                   </s-stack>
+
+                  {!data.suggestionKind && item.adminHref && data.items.length > 1 && (
+                    <s-button variant="tertiary" icon="external" href={item.adminHref}>
+                      {remedy.verb}
+                    </s-button>
+                  )}
                 </s-stack>
 
-                {data.suggestionKind && item.draftTarget ? (
+                {data.suggestionKind && item.draftTarget && (
                   <SuggestedCopy
                     kind={data.suggestionKind}
                     draft={item.draft}
@@ -372,13 +422,6 @@ export default function IssueDetail() {
                     adminHref={item.adminHref}
                     onDraft={() => submit({ intent: "draft", issueId: item.id })}
                   />
-                ) : (
-                  item.adminHref &&
-                  data.items.length > 1 && (
-                    <s-button variant="tertiary" href={item.adminHref}>
-                      Edit in Shopify Admin
-                    </s-button>
-                  )
                 )}
               </s-stack>
             </s-box>
@@ -387,30 +430,46 @@ export default function IssueDetail() {
       </s-section>
 
       <s-section heading="When you've made the change">
-        <s-stack direction="block" gap="small">
-          <s-paragraph color="subdued">
-            StoreRx only marks something solved once a scan confirms it, so your dashboard reflects
-            your real storefront rather than what was intended.
-          </s-paragraph>
-          <s-stack direction="inline" gap="small" alignItems="center">
+        <s-stack direction="block" gap="base">
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-icon type="shield-check-mark" tone="info" size="small" />
+            <s-text color="subdued">
+              StoreRx only marks something solved once a scan confirms it, so your dashboard
+              reflects your real storefront rather than what was intended.
+            </s-text>
+          </s-stack>
+
+          <s-stack direction="inline" gap="small-300" alignItems="center">
             {data.status === "open" && (
-              <s-button variant="secondary" disabled={busy} onClick={() => submit({ intent: "markResolved" })}>
-                Mark as resolved
+              <s-button
+                variant="secondary"
+                icon="check"
+                disabled={busy}
+                onClick={() => submit({ intent: "markResolved" })}
+              >
+                I&apos;ve made this change
               </s-button>
             )}
             {data.status === "awaiting_verification" && (
-              <s-button variant="tertiary" disabled={busy} onClick={() => submit({ intent: "reopen" })}>
+              <s-button
+                variant="tertiary"
+                disabled={busy}
+                onClick={() => submit({ intent: "reopen" })}
+              >
                 Not done after all
               </s-button>
             )}
             {data.scope && (
               <s-button
                 variant={data.status === "awaiting_verification" ? "primary" : "tertiary"}
+                icon={data.scope.state ? undefined : AREA_ICON[data.scope.key]}
                 disabled={busy || data.scope.state !== null}
                 loading={data.scope.state === "running"}
                 onClick={() => submit({ intent: "rescan" })}
               >
-                {data.scope.state ? `Scanning ${data.scope.label}…` : `Re-scan ${data.scope.label}`}
+                {data.scope.state
+                  ? `Scanning ${data.scope.label}…`
+                  : `Re-scan ${data.scope.label}`}
               </s-button>
             )}
           </s-stack>
@@ -429,9 +488,17 @@ export function ErrorBoundary() {
   return (
     <s-page heading="Issue not found">
       <s-section>
-        <EmptyState heading="StoreRx doesn't know about this issue" action={{ label: "Back to dashboard", to: "/app" }}>
+        <StateCard
+          icon="search"
+          heading="StoreRx doesn't know about this issue"
+          action={
+            <s-button variant="primary" href="/app">
+              Back to dashboard
+            </s-button>
+          }
+        >
           It may have been verified and cleared, or the scan that found it is no longer on record.
-        </EmptyState>
+        </StateCard>
       </s-section>
     </s-page>
   );

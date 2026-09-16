@@ -20,7 +20,16 @@ import {
   type ShopData,
 } from "../app/rules";
 import type { CatalogImages } from "../app/collectors/images";
-import { SCAN_SCOPES, type ScanScope, type StorefrontArea } from "../app/scans/scopes";
+import { SCAN_SCOPES, type ScanScope } from "../app/scans/scopes";
+import {
+  ANALYSIS_STEP,
+  AREA_ORDER,
+  AREA_STEP,
+  CHECKOUT_STEP,
+  IMAGES_STEP,
+  PERFORMANCE_STEP,
+  planScanSteps,
+} from "../app/scans/steps";
 import { calculateScore } from "../app/scoring";
 import {
   buildAuditPageList,
@@ -74,15 +83,6 @@ export interface AuditJobOptions {
   collectImages?: () => Promise<CatalogImages>;
 }
 
-const AREA_STEP: Record<StorefrontArea, string> = {
-  homepage: "Scanning homepage",
-  collection: "Scanning collections",
-  product: "Scanning product pages",
-  cart: "Scanning cart",
-};
-
-const AREA_ORDER: StorefrontArea[] = ["homepage", "collection", "product", "cart"];
-
 /**
  * Record where a page's findings were detected: the storefront URL for the
  * merchant, and the admin GID of the product or collection behind it so the
@@ -114,15 +114,10 @@ export async function processAuditJob(
   const scannedUrls: string[] = [];
 
   // Progress steps follow the scope, so a homepage-only scan does not sit at
-  // 20% while skipping steps it never runs.
+  // 20% while skipping steps it never runs. Shared with the dashboard, which
+  // renders the same list as a checklist.
   const areas = AREA_ORDER.filter((area) => spec.pages.includes(area));
-  const steps = [
-    ...areas.map((area) => AREA_STEP[area]),
-    ...(spec.catalogImages && options.collectImages ? ["Scanning product images"] : []),
-    ...(spec.performance ? ["Running performance audit"] : []),
-    ...(spec.checkout ? ["Checking checkout settings"] : []),
-    "Analyzing results",
-  ];
+  const steps = planScanSteps(scope);
   const progress = (step: string, detail?: string) => {
     const index = Math.max(steps.indexOf(step), 0);
     onProgress?.({
@@ -169,14 +164,14 @@ export async function processAuditJob(
     // Catalog images: Admin API metadata only, covering the whole catalog up
     // to the scan cap rather than just the sampled product pages.
     if (spec.catalogImages && options.collectImages) {
-      progress("Scanning product images");
+      progress(IMAGES_STEP);
       const catalog = await options.collectImages();
       findings.push(...checkCatalogImages(catalog.products).filter((f) => include(f.ruleId)));
       CATALOG_IMAGE_RULE_IDS.filter(include).forEach((ruleId) => evaluated.add(ruleId));
       const images = catalog.products.reduce((n, p) => n + p.images.length, 0);
       progress(
-        "Scanning product images",
-        `Checked ${images} images across ${catalog.products.length} of ${catalog.totalProducts} products`,
+        IMAGES_STEP,
+        `${IMAGES_STEP} — ${images} images across ${catalog.products.length} of ${catalog.totalProducts} products`,
       );
     }
 
@@ -185,7 +180,7 @@ export async function processAuditJob(
     // screen. Say so rather than reporting a meaningless speed score.
     let lighthouse: LighthouseResult = { combinedScore: null };
     if (spec.performance) {
-      progress("Running performance audit");
+      progress(PERFORMANCE_STEP);
       if (shopData.passwordProtected) {
         throw new NonRetryableError(
           "Google PageSpeed can only measure a storefront that is open to the public, and yours " +
@@ -217,13 +212,13 @@ export async function processAuditJob(
     }
 
     if (spec.checkout) {
-      progress("Checking checkout settings");
+      progress(CHECKOUT_STEP);
       const run = runRulesDetailed("checkout", { html: "", shopData }, include);
       run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
       findings.push(...run.findings);
     }
 
-    progress("Analyzing results");
+    progress(ANALYSIS_STEP);
     return {
       findings,
       performanceScore: lighthouse.combinedScore,

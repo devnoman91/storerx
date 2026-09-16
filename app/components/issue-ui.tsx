@@ -1,35 +1,34 @@
 /**
- * Shared pieces of the issue experience.
+ * The issue card and its parts.
  *
- * The visual hierarchy is fixed across every screen: impact first, then what
- * was detected, then where it is, then what the merchant can do about it.
- * Nothing here offers to change the store — the actions either open a
- * recommendation or send the merchant to the place they make the change.
+ * Reading order is fixed everywhere StoreRx shows an issue: how much it costs,
+ * what it is, where it is, why it matters, then what the merchant can do about
+ * it. Actions come from `actionsFor()`, so a card never offers a generic "fix"
+ * — and never implies StoreRx will make the change.
  */
 
-import { Link } from "react-router";
-import type { RemedyKind } from "../remedies/types";
-import { REMEDY_LABELS, type IssueStatus } from "../remedies/actions";
-import type { Severity } from "../rules/types";
-
-export const IMPACT: Record<Severity, { tone: "critical" | "warning" | "info"; label: string }> = {
-  high: { tone: "critical", label: "High impact" },
-  medium: { tone: "warning", label: "Medium impact" },
-  low: { tone: "info", label: "Low impact" },
-};
-
-export function impactOf(severity: string) {
-  return IMPACT[severity as Severity] ?? IMPACT.low;
-}
+import type { ReactNode } from "react";
+import { type IssueStatus } from "../remedies/actions";
+import { remedyToken, severityToken } from "./tokens";
+import { ShowMore } from "./primitives";
 
 export function ImpactBadge({ severity }: { severity: string }) {
-  const impact = impactOf(severity);
-  return <s-badge tone={impact.tone}>{impact.label}</s-badge>;
+  const token = severityToken(severity);
+  return (
+    <s-badge tone={token.tone} icon={token.icon}>
+      {token.label}
+    </s-badge>
+  );
 }
 
-/** Says which surface the merchant works in, so the card is scannable. */
+/** Says which surface the merchant works in — the fastest signal on a card. */
 export function RemedyChip({ remedy }: { remedy: string }) {
-  return <s-badge tone="neutral">{REMEDY_LABELS[remedy as RemedyKind] ?? "Advice"}</s-badge>;
+  const token = remedyToken(remedy);
+  return (
+    <s-badge tone="neutral" icon={token.icon}>
+      {token.label}
+    </s-badge>
+  );
 }
 
 export function IssueStatusBadge({
@@ -39,11 +38,27 @@ export function IssueStatusBadge({
   status: IssueStatus;
   verificationFailed?: boolean;
 }) {
-  if (status === "resolved") return <s-badge tone="success">Verified</s-badge>;
-  if (status === "awaiting_verification") {
-    return <s-badge tone="info">Verified on next scan</s-badge>;
+  if (status === "resolved") {
+    return (
+      <s-badge tone="success" icon="check-circle">
+        Verified
+      </s-badge>
+    );
   }
-  if (verificationFailed) return <s-badge tone="warning">Still found</s-badge>;
+  if (status === "awaiting_verification") {
+    return (
+      <s-badge tone="info" icon="clock">
+        Awaiting verification
+      </s-badge>
+    );
+  }
+  if (verificationFailed) {
+    return (
+      <s-badge tone="warning" icon="alert-triangle">
+        Still found
+      </s-badge>
+    );
+  }
   return null;
 }
 
@@ -75,97 +90,100 @@ export interface PrescriptionView {
   count: number;
 }
 
+export function issueHref(ruleId: string): string {
+  return `/app/issues/${encodeURIComponent(ruleId)}`;
+}
+
 /**
- * One prescription. The whole card is the primary action — the buttons repeat
- * it explicitly so the available action is readable without hovering.
+ * One prescription. The severity icon leads so a merchant can scan a column of
+ * these and find what matters without reading a word.
  */
 export function IssueCard({ issue }: { issue: PrescriptionView }) {
+  const severity = severityToken(issue.severity);
+  const remedy = remedyToken(issue.remedy);
+
   return (
-    <s-box padding="base" borderWidth="base none none none" borderColor="base">
-      <s-stack direction="block" gap="small">
-        <s-stack direction="inline" gap="small" alignItems="center">
-          <ImpactBadge severity={issue.severity} />
-          <RemedyChip remedy={issue.remedy} />
-          {issue.isNew && <s-badge tone="info">New</s-badge>}
-          <IssueStatusBadge status={issue.status} verificationFailed={issue.verificationFailed} />
-        </s-stack>
+    <s-box padding="base" borderRadius="base" background="subdued">
+      <s-stack direction="inline" gap="base" alignItems="start">
+        <s-box paddingBlockStart="small-500">
+          <s-icon type={severity.icon} tone={severity.tone} size="base" />
+        </s-box>
 
-        <s-stack direction="block" gap="small-500">
-          <s-text type="strong">{issue.title}</s-text>
-          {issue.subtitle && <s-text color="subdued">{issue.subtitle}</s-text>}
-        </s-stack>
+        <s-stack direction="block" gap="small">
+          <s-stack
+            direction="inline"
+            gap="small"
+            alignItems="start"
+            justifyContent="space-between"
+          >
+            <s-stack direction="block" gap="small-500">
+              <s-text type="strong">{issue.title}</s-text>
+              <s-text color="subdued">
+                {[issue.subtitle, remedy.label].filter(Boolean).join(" · ")}
+              </s-text>
+            </s-stack>
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              {issue.isNew && <s-badge tone="info">New</s-badge>}
+              <IssueStatusBadge
+                status={issue.status}
+                verificationFailed={issue.verificationFailed}
+              />
+              <s-badge tone={severity.tone}>{severity.label}</s-badge>
+            </s-stack>
+          </s-stack>
 
-        {issue.explanation && <s-paragraph color="subdued">{issue.explanation}</s-paragraph>}
-
-        {issue.verificationFailed && (
-          <s-text color="subdued">
-            You marked this fixed, but the last scan found it again.
-          </s-text>
-        )}
-
-        <s-stack direction="inline" gap="small" alignItems="center">
-          <s-button variant="secondary" href={`/app/issues/${encodeURIComponent(issue.ruleId)}`}>
-            {issue.primaryLabel}
-          </s-button>
-          {issue.secondary?.href && (
-            <s-button variant="tertiary" href={issue.secondary.href}>
-              {issue.secondary.label}
-            </s-button>
+          {issue.explanation && (
+            <s-paragraph color="subdued" lineClamp={2}>
+              {issue.explanation}
+            </s-paragraph>
           )}
+
+          {issue.verificationFailed && (
+            <s-text color="subdued">
+              You marked this done, but the last scan found it again.
+            </s-text>
+          )}
+
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-button variant="secondary" href={issueHref(issue.ruleId)}>
+              {issue.primaryLabel}
+            </s-button>
+            {issue.secondary?.href && (
+              <s-button variant="tertiary" icon="external" href={issue.secondary.href}>
+                {issue.secondary.label}
+              </s-button>
+            )}
+          </s-stack>
         </s-stack>
       </s-stack>
     </s-box>
   );
 }
 
+/**
+ * A severity band of issues. Long lists collapse after the first few so a
+ * store with forty issues still has a readable dashboard.
+ */
 export function IssueGroup({
   heading,
+  intro,
   issues,
-  tone,
 }: {
   heading: string;
+  intro?: ReactNode;
   issues: PrescriptionView[];
-  tone?: "critical" | "warning" | "neutral";
 }) {
   if (issues.length === 0) return null;
 
   return (
     <s-section heading={`${heading} (${issues.length})`}>
-      {tone === "critical" && (
-        <s-paragraph color="subdued">
-          These cost you the most sales. Start here.
-        </s-paragraph>
-      )}
-      <s-box borderWidth="none" borderRadius="base">
-        {issues.map((issue) => (
-          <IssueCard key={issue.ruleId} issue={issue} />
-        ))}
-      </s-box>
+      {intro && <s-paragraph color="subdued">{intro}</s-paragraph>}
+      <ShowMore
+        items={issues}
+        initial={4}
+        moreLabel={(n) => `Show ${n} more`}
+        render={(issue) => <IssueCard key={issue.ruleId} issue={issue} />}
+      />
     </s-section>
-  );
-}
-
-/** Shared empty state, so "nothing here" always reads the same way. */
-export function EmptyState({
-  heading,
-  children,
-  action,
-}: {
-  heading: string;
-  children?: React.ReactNode;
-  action?: { label: string; to: string };
-}) {
-  return (
-    <s-box padding="large-200" background="subdued" borderRadius="base">
-      <s-stack direction="block" gap="small" alignItems="center">
-        <s-heading>{heading}</s-heading>
-        {children && <s-paragraph color="subdued">{children}</s-paragraph>}
-        {action && (
-          <Link to={action.to}>
-            <s-text color="base">{action.label}</s-text>
-          </Link>
-        )}
-      </s-stack>
-    </s-box>
   );
 }

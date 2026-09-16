@@ -1,4 +1,12 @@
 import { describe, it, expect } from "vitest";
+import {
+  ANALYSIS_STEP,
+  AREA_STEP,
+  IMAGES_STEP,
+  PERFORMANCE_STEP,
+  planScanSteps,
+  stepStates,
+} from "../../app/scans/steps";
 import { allRules, getRulesForPage, runRulesDetailed } from "../../app/rules";
 import { imageRules } from "../../app/rules/images";
 import { perfRules } from "../../app/rules/perf";
@@ -80,5 +88,41 @@ describe("scan scopes", () => {
       for (const finding of run.findings) expect(run.evaluated, finding.ruleId).toContain(finding.ruleId);
     }
     expect(imageRules.every((rule) => rule.id.startsWith("img."))).toBe(true);
+  });
+});
+
+describe("scan steps", () => {
+  it("plans only the steps a scope actually runs", () => {
+    expect(planScanSteps("homepage")).toEqual([AREA_STEP.homepage, ANALYSIS_STEP]);
+    expect(planScanSteps("alt")).toEqual([IMAGES_STEP, ANALYSIS_STEP]);
+    expect(planScanSteps("speed")).toEqual([PERFORMANCE_STEP, ANALYSIS_STEP]);
+    expect(planScanSteps("seo")).toEqual([
+      AREA_STEP.collection,
+      AREA_STEP.product,
+      ANALYSIS_STEP,
+    ]);
+  });
+
+  it("always ends by writing recommendations", () => {
+    for (const scope of SCAN_SCOPE_ORDER) {
+      expect(planScanSteps(scope).at(-1)).toBe(ANALYSIS_STEP);
+    }
+  });
+
+  it("marks steps done, active and pending from what the worker reported", () => {
+    const steps = planScanSteps("seo");
+    expect(stepStates(steps, AREA_STEP.product)).toEqual(["done", "active", "pending"]);
+    // The worker appends detail to the label it is on.
+    expect(stepStates(steps, `${AREA_STEP.collection} 2/3`)).toEqual([
+      "active",
+      "pending",
+      "pending",
+    ]);
+  });
+
+  it("shows nothing as started rather than guessing when no step was reported", () => {
+    const steps = planScanSteps("images");
+    expect(stepStates(steps, null)).toEqual(["pending", "pending"]);
+    expect(stepStates(steps, "Something else entirely")).toEqual(["pending", "pending"]);
   });
 });

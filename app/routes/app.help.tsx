@@ -3,6 +3,8 @@ import { useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { TRIAL_DAYS } from "../billing/plans";
+import { HowItWorks } from "../components/how-it-works";
+import { Callout } from "../components/primitives";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -73,11 +75,19 @@ export default function Help() {
 
   return (
     <s-page heading="Help">
-      <s-section heading="Getting started">
-        <s-paragraph>
-          StoreRx checks your store for problems that cost you sales — missing trust signals, weak
-          product pages, SEO gaps, heavy images and slow pages — and explains how to fix each one.
-        </s-paragraph>
+      <s-section heading="How StoreRx works">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            StoreRx checks your store for problems that cost you sales — missing trust signals, weak
+            product pages, SEO gaps, heavy images and slow pages — and recommends what to do about
+            each one.
+          </s-paragraph>
+          <HowItWorks />
+          <Callout icon="shield-check-mark">
+            StoreRx never edits your store. Every change is one you make yourself, in Shopify admin,
+            your settings or your theme.
+          </Callout>
+        </s-stack>
       </s-section>
 
       {SETUP_STEPS.map((step, index) => (
@@ -89,8 +99,14 @@ export default function Help() {
           </s-unordered-list>
           {index === 2 && (
             <s-stack direction="inline" gap="small">
-              <s-button href="/app/settings">Open Settings</s-button>
-              <s-button href="shopify://admin/themes/current/editor?context=apps" target="_top">
+              <s-button variant="secondary" icon="settings" href="/app/settings">
+                Open settings
+              </s-button>
+              <s-button
+                variant="tertiary"
+                icon="paint-brush-flat"
+                href="shopify://admin/themes/current/editor?context=apps"
+              >
                 Open theme editor
               </s-button>
             </s-stack>
@@ -122,8 +138,12 @@ export default function Help() {
 
       <s-section heading="More">
         <s-stack direction="inline" gap="small">
-          <s-button href="/app/billing">Plans & billing</s-button>
-          <s-button href="/app/history">Scan history</s-button>
+          <s-button variant="tertiary" icon="cash-dollar" href="/app/billing">
+            Plans &amp; billing
+          </s-button>
+          <s-button variant="tertiary" icon="clock" href="/app/history">
+            Scan history
+          </s-button>
         </s-stack>
       </s-section>
     </s-page>

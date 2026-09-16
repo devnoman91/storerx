@@ -111,7 +111,7 @@ async function explainWithCache(
   // rule's own wording, and are explained once allowance is available again.
   const remaining = await aiCreditsRemaining(shop);
   if (remaining === 0) {
-    console.log(`[worker] ${shop.domain} has no AI explanations left this period; ${misses.length} rule(s) unexplained`);
+    console.log(`[worker] ${shop.domain} has no AI credits left this period; ${misses.length} rule(s) unexplained`);
     return { explanations, generated: 0, reused: hits.size };
   }
 

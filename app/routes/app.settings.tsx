@@ -3,6 +3,8 @@ import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
+import { planOf } from "../billing/plans";
+import { Callout } from "../components/primitives";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -26,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     brandVoice: shop.brandVoice || "",
     auditSchedule: shop.auditSchedule,
     emailSummary: shop.emailSummary,
-    plan: shop.plan,
+    planLabel: planOf(shop.plan).label,
     passwordProtected,
     // Whether one is saved — the password itself never leaves the server.
     hasStorefrontPassword: Boolean(shop.storefrontPassword),
@@ -58,12 +60,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { success: true };
 };
 
+const SCHEDULES: Array<[string, string]> = [
+  ["manual", "Only when I ask"],
+  ["weekly", "Weekly"],
+  ["monthly", "Monthly"],
+];
+
+/** What the storefront password field should say, which depends on two things. */
+function passwordHelp(protectedStore: boolean, saved: boolean): string {
+  if (!protectedStore) return "Your storefront is public, so scans don't need a password.";
+  if (saved) {
+    return "A password is saved. Enter a new one only if you want to change it.";
+  }
+  return (
+    "Your store is password-protected, so scans can only see the password page until you add it " +
+    "here. Find it in Shopify admin under Online Store → Preferences."
+  );
+}
+
 export default function Settings() {
   const data = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const isSaving = fetcher.state !== "idle";
   const navigate = useNavigate();
   const justSaved = fetcher.state === "idle" && fetcher.data?.success === true;
+  const needsPassword = data.passwordProtected && !data.hasStorefrontPassword;
 
   return (
     <s-page heading="Settings">
@@ -74,111 +95,84 @@ export default function Settings() {
 
       {justSaved && <s-banner tone="success" heading="Settings saved" />}
 
+      {needsPassword && (
+        <s-banner tone="warning" heading="StoreRx can't see your storefront">
+          Your store is password-protected, so scans only reach the password page. Add your
+          storefront password below to scan your real pages.
+        </s-banner>
+      )}
+
       <fetcher.Form method="post">
-        {/* Brand Voice */}
-        <div style={{ marginBottom: 24 }}>
-          <label htmlFor="brandVoice" style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
-            Brand Voice (optional)
-          </label>
-          <p style={{ fontSize: 13, color: "#6B7280", margin: "0 0 8px 0" }}>
-            Paste a sample of your writing style. AI will match this tone.
-          </p>
-          <textarea
-            id="brandVoice"
-            name="brandVoice"
-            defaultValue={data.brandVoice}
-            placeholder="e.g., We're friendly and casual. We avoid jargon and speak directly to our customers..."
-            style={{
-              width: "100%",
-              minHeight: 100,
-              padding: 12,
-              border: "1px solid #D1D5DB",
-              borderRadius: 8,
-              fontSize: 14,
-              resize: "vertical",
-            }}
-          />
-        </div>
+        <s-section heading="How StoreRx writes for you">
+          <s-stack direction="block" gap="base">
+            <s-text-area
+              name="brandVoice"
+              label="Brand voice"
+              details="Paste a sample of your own writing. StoreRx matches this tone when it explains an issue or drafts copy for you."
+              defaultValue={data.brandVoice}
+              placeholder="We're friendly and direct. We avoid jargon and speak plainly to our customers…"
+              rows={4}
+            />
+            <Callout icon="wand">
+              Changing this rewrites future recommendations. Ones StoreRx has already written stay
+              as they are until the issue is found again.
+            </Callout>
+          </s-stack>
+        </s-section>
 
-        {/* Storefront password */}
-        <div style={{ marginBottom: 24 }}>
-          <label htmlFor="storefrontPassword" style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
-            Storefront password
-          </label>
-          <p style={{ fontSize: 13, color: data.passwordProtected && !data.hasStorefrontPassword ? "#92400E" : "#6B7280", margin: "0 0 8px 0" }}>
-            {data.passwordProtected
-              ? data.hasStorefrontPassword
-                ? "Your store is password-protected. A password is saved — enter a new one only to change it."
-                : "Your store is password-protected, so scans can only see the password page until you add it here. Find it in Shopify admin under Online Store → Preferences."
-              : "Your storefront is public, so scans don't need a password."}
-          </p>
-          <input
-            id="storefrontPassword"
+        <s-section heading="Access to your storefront">
+          <s-password-field
             name="storefrontPassword"
-            type="password"
-            autoComplete="off"
+            label="Storefront password"
+            details={passwordHelp(data.passwordProtected, data.hasStorefrontPassword)}
             placeholder={data.hasStorefrontPassword ? "•••••••• (saved)" : "Storefront password"}
-            style={{
-              width: "100%",
-              maxWidth: 320,
-              padding: "8px 12px",
-              border: "1px solid #D1D5DB",
-              borderRadius: 8,
-              fontSize: 14,
-            }}
+            autocomplete="off"
+            disabled={!data.passwordProtected}
           />
-        </div>
+        </s-section>
 
-        {/* Scan Schedule */}
-        <div style={{ marginBottom: 24 }}>
-          <label htmlFor="auditSchedule" style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
-            Auto-scan Schedule
-          </label>
-          <select
-            id="auditSchedule"
-            name="auditSchedule"
-            defaultValue={data.auditSchedule}
-            style={{
-              padding: "8px 12px",
-              border: "1px solid #D1D5DB",
-              borderRadius: 8,
-              fontSize: 14,
-            }}
-          >
-            <option value="manual">Manual only</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-          </select>
-        </div>
+        <s-section heading="Scanning">
+          <s-stack direction="block" gap="base">
+            {/* s-select takes its initial value from the selected option,
+                not a defaultValue prop. */}
+            <s-select
+              name="auditSchedule"
+              label="Automatic scans"
+              details="Scheduled scans count towards your plan just like ones you start yourself."
+            >
+              {SCHEDULES.map(([value, label]) => (
+                <s-option
+                  key={value}
+                  value={value}
+                  defaultSelected={data.auditSchedule === value}
+                >
+                  {label}
+                </s-option>
+              ))}
+            </s-select>
 
-        {/* Email */}
-        <div style={{ marginBottom: 24 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <input
-              type="checkbox"
+            <s-checkbox
               name="emailSummary"
+              label="Email me when a scan finishes"
+              details="A summary of what changed — new issues, and ones StoreRx verified."
               defaultChecked={data.emailSummary}
             />
-            <span style={{ fontSize: 14 }}>Email me scan results</span>
-          </label>
-        </div>
+          </s-stack>
+        </s-section>
 
-        <s-button variant="primary" type="submit" disabled={isSaving}>
-          {isSaving ? "Saving..." : "Save Settings"}
-        </s-button>
+        <s-section>
+          <s-stack direction="inline" gap="small" alignItems="center" justifyContent="space-between">
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-text color="subdued">Current plan</s-text>
+              <s-badge tone="neutral">{data.planLabel}</s-badge>
+              <s-link href="/app/billing">Change</s-link>
+            </s-stack>
+            <s-button variant="primary" type="submit" loading={isSaving} disabled={isSaving}>
+              Save settings
+            </s-button>
+          </s-stack>
+        </s-section>
       </fetcher.Form>
-
-      {/* Plan Info */}
-      <div style={{
-        marginTop: 32,
-        paddingTop: 24,
-        borderTop: "1px solid #E5E7EB",
-      }}>
-        <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0" }}>Current Plan</h3>
-        <p style={{ fontSize: 14, color: "#6B7280", margin: 0 }}>
-          {data.plan === "free" ? "Free Plan" : `${data.plan.charAt(0).toUpperCase() + data.plan.slice(1)} Plan`}
-        </p>
-      </div>
     </s-page>
   );
 }

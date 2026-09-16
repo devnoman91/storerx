@@ -13,6 +13,7 @@ import {
   syncSubscription,
 } from "../billing/billing.server";
 import { PLANS, PLAN_ORDER, TRIAL_DAYS, isPaidPlanKey, type PlanKey } from "../billing/plans";
+import { AI_CREDIT_HINT, UsageRow } from "../components/usage";
 
 async function loadShop(shopDomain: string) {
   return prisma.shop.upsert({ where: { domain: shopDomain }, create: { domain: shopDomain }, update: {} });
@@ -72,10 +73,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: false as const, error: "Shopify couldn't complete that billing change. Please try again." };
   }
 };
-
-function limitText(used: number, limit: number | null): string {
-  return limit === null ? `${used} used · unlimited` : `${used} of ${limit} used`;
-}
 
 const FAQ: [string, string][] = [
   [
@@ -138,9 +135,13 @@ export default function Billing() {
       )}
 
       <s-section heading={`Current plan: ${current.label}`}>
-        <s-stack direction="block" gap="small">
-          <s-text>Scans: {limitText(data.usage.scans, current.limits.scans)}</s-text>
-          <s-text>AI recommendations: {limitText(data.usage.aiCredits, current.limits.aiCredits)}</s-text>
+        <s-stack direction="block" gap="base">
+          <UsageRow label="Scans" count={{ used: data.usage.scans, limit: current.limits.scans }} />
+          <UsageRow
+            label="AI recommendations"
+            count={{ used: data.usage.aiCredits, limit: current.limits.aiCredits }}
+            hint={AI_CREDIT_HINT}
+          />
           <s-text color="subdued">
             Limits reset on {data.resetsAt}.{data.renewsOn ? ` Your plan renews on ${data.renewsOn}.` : ""}
           </s-text>
@@ -171,13 +172,19 @@ export default function Billing() {
             const plan = PLANS[key];
             const isCurrent = key === data.currentPlan;
             return (
-              <s-box key={key} padding="base" border="base" borderRadius="base">
+              <s-box key={key} padding="base" background="subdued" borderRadius="base">
                 <s-stack direction="block" gap="small">
-                  <s-stack direction="inline" gap="small" alignItems="center">
+                  <s-stack direction="inline" gap="small-300" alignItems="center">
                     <s-heading>{plan.label}</s-heading>
-                    {isCurrent && <s-badge tone="success">Current</s-badge>}
+                    {isCurrent && (
+                      <s-badge tone="success" icon="check-circle">
+                        Current
+                      </s-badge>
+                    )}
                   </s-stack>
-                  <s-text type="strong">{plan.price === 0 ? "Free" : `$${plan.price} / 30 days`}</s-text>
+                  <s-text type="strong" fontVariantNumeric="tabular-nums">
+                    {plan.price === 0 ? "Free" : `$${plan.price} / 30 days`}
+                  </s-text>
                   <s-text color="subdued">{plan.summary}</s-text>
                   <s-unordered-list>
                     {plan.features.map((feature) => (

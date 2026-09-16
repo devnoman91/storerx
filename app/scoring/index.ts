@@ -62,6 +62,18 @@ const PAGE_TO_CATEGORY: Record<PageType, ScoreCategory> = {
   perf: "performance",
 };
 
+/**
+ * Categories at least one page type feeds. A category no rule maps to cannot
+ * be measured at all — scoring it 100 because nothing was found would invent
+ * a result and, since the average is weighted, inflate every store's overall
+ * score by that category's weight.
+ */
+const MEASURABLE: ReadonlySet<ScoreCategory> = new Set(Object.values(PAGE_TO_CATEGORY));
+
+export function isMeasurableCategory(category: ScoreCategory): boolean {
+  return MEASURABLE.has(category);
+}
+
 // Maximum penalty per category (prevents score from going below 0)
 const MAX_CATEGORY_PENALTY = 100;
 
@@ -159,6 +171,12 @@ export function calculateStoreHealth(
   const categories: CategoryScore[] = Object.entries(byCategory).map(([cat, catFindings]) => {
     const score = calculateCategoryScore(catFindings);
     score.category = cat as ScoreCategory;
+    // No rule reports into this category, so there is nothing behind a score.
+    if (!MEASURABLE.has(score.category)) {
+      score.measured = false;
+      score.score = 0;
+      return score;
+    }
     // Keep the finding counts, but take the score itself from Lighthouse.
     if (score.category === "performance") {
       if (typeof options.performanceScore === "number") {

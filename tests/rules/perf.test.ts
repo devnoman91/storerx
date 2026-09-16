@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { runRules } from "../../app/rules";
 import { perfRules } from "../../app/rules/perf";
 import type { Finding, LighthouseMetrics } from "../../app/rules/types";
-import { calculateStoreHealth } from "../../app/scoring";
+import { calculateStoreHealth, isMeasurableCategory } from "../../app/scoring";
 
 function fixture(name: string): LighthouseMetrics {
   const path = join(__dirname, "..", "fixtures", "perf", `${name}.json`);
@@ -140,8 +140,39 @@ describe("performance scoring", () => {
 
   it("still weights a genuine zero performance score", () => {
     // A real measured 0 must drag the overall down — only *absence* is excluded.
+    // Measured weights are conversion .30 + performance .20 + seo .15 +
+    // productPages .15 = .80, so (30 + 0 + 15 + 15) / .80 = 75.
     const health = calculateStoreHealth([], { performanceScore: 0 });
     expect(health.categories.find((c) => c.category === "performance")?.measured).toBe(true);
-    expect(health.overall).toBe(80);
+    expect(health.overall).toBe(75);
+  });
+});
+
+describe("categories nothing measures", () => {
+  it("does not score a category no rule reports into", () => {
+    const health = calculateStoreHealth([
+      { ruleId: "home.trust", severity: "high", page: "homepage" },
+    ]);
+    const ux = health.categories.find((c) => c.category === "ux")!;
+
+    // No page type maps to UX, so there is nothing behind a score for it.
+    expect(ux.measured).toBe(false);
+    expect(isMeasurableCategory("ux")).toBe(false);
+    expect(isMeasurableCategory("conversion")).toBe(true);
+  });
+
+  it("keeps an unmeasurable category out of the overall score", () => {
+    const health = calculateStoreHealth([
+      { ruleId: "home.trust", severity: "high", page: "homepage" },
+    ]);
+    const conversion = health.categories.find((c) => c.category === "conversion")!;
+    expect(conversion.score).toBe(90);
+
+    // Only measured categories count, and their weights are renormalised:
+    // (.30x90 + .20x100 + .15x100 + .15x100) / .80 = 96.25.
+    expect(health.overall).toBe(96);
+
+    const weights = health.categories.filter((c) => c.measured).map((c) => c.category);
+    expect(weights).not.toContain("ux");
   });
 });
