@@ -181,12 +181,14 @@ export interface AuditPage {
    * a storefront URL alone cannot be turned into an admin link.
    */
   resourceId?: string;
+  /** Its name, so findings list "Alpine Jacket" rather than a URL path. */
+  resourceTitle?: string;
 }
 
 export function buildAuditPageList(
   domain: string,
-  collections: Array<{ handle: string; id?: string }>,
-  products: Array<{ handle: string; id?: string }>
+  collections: Array<{ handle: string; id?: string; title?: string }>,
+  products: Array<{ handle: string; id?: string; title?: string }>
 ): AuditPage[] {
   const baseUrl = `https://${domain}`;
 
@@ -201,6 +203,7 @@ export function buildAuditPageList(
       type: "collection",
       url: `${baseUrl}/collections/${coll.handle}`,
       resourceId: coll.id,
+      resourceTitle: coll.title,
     });
   }
 
@@ -210,6 +213,7 @@ export function buildAuditPageList(
       type: "product",
       url: `${baseUrl}/products/${prod.handle}`,
       resourceId: prod.id,
+      resourceTitle: prod.title,
     });
   }
 

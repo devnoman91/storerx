@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runRules } from "../../app/rules";
+import { allRules, runRules, CATALOG_IMAGE_RULE_IDS } from "../../app/rules";
 import { perfRules } from "../../app/rules/perf";
 import type { Finding, LighthouseMetrics } from "../../app/rules/types";
-import { calculateStoreHealth, isMeasurableCategory } from "../../app/scoring";
+import {
+  CATEGORY_CHECK_COUNTS,
+  UNREACHABLE_RULE_IDS,
+  calculateStoreHealth,
+  isMeasurableCategory,
+} from "../../app/scoring";
 
 function fixture(name: string): LighthouseMetrics {
   const path = join(__dirname, "..", "fixtures", "perf", `${name}.json`);
@@ -174,5 +179,53 @@ describe("categories nothing measures", () => {
 
     const weights = health.categories.filter((c) => c.measured).map((c) => c.category);
     expect(weights).not.toContain("ux");
+  });
+});
+
+describe("score coverage", () => {
+  // The SEO scan runs these four rules and nothing else.
+  const SEO_SCAN = new Set(["prod.seo.title", "prod.seo.meta", "prod.schema", "coll.description"]);
+
+  it("does not score a category none of whose checks have run", () => {
+    const health = calculateStoreHealth([], { evaluatedRules: SEO_SCAN });
+    const seo = health.categories.find((c) => c.category === "seo")!;
+
+    // Every rule in the SEO *category* is an image check, and an SEO scan runs
+    // none of them. Reporting 100 told merchants their images were perfect.
+    expect(seo.checksRun).toBe(0);
+    expect(seo.measured).toBe(false);
+  });
+
+  it("reports how much of a category has actually been checked", () => {
+    const health = calculateStoreHealth([], { evaluatedRules: SEO_SCAN });
+    const conversion = health.categories.find((c) => c.category === "conversion")!;
+    const productPages = health.categories.find((c) => c.category === "productPages")!;
+
+    expect(conversion.checksRun).toBe(1);
+    expect(conversion.checksTotal).toBeGreaterThan(20);
+    expect(productPages.checksRun).toBe(3);
+    expect(productPages.measured).toBe(true);
+  });
+
+  it("builds the overall score only from categories that were checked", () => {
+    const seoOnly = calculateStoreHealth([], { evaluatedRules: SEO_SCAN });
+    const everything = calculateStoreHealth([]);
+
+    // Both stores are flawless, but one has had four checks run and the other
+    // all of them. The score is the same; what differs is how much it covers.
+    expect(seoOnly.overall).toBe(100);
+    expect(everything.overall).toBe(100);
+    expect(seoOnly.categories.filter((c) => c.measured).map((c) => c.category)).toEqual([
+      "conversion",
+      "productPages",
+    ]);
+  });
+
+  it("counts every reachable rule, including the catalog image checks", () => {
+    const total = Object.values(CATEGORY_CHECK_COUNTS).reduce((sum, n) => sum + n, 0);
+    expect(total).toBe(
+      allRules.length - UNREACHABLE_RULE_IDS.length + CATALOG_IMAGE_RULE_IDS.length,
+    );
+    expect(CATEGORY_CHECK_COUNTS.ux).toBe(0);
   });
 });

@@ -101,12 +101,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     };
   });
 
+  // An admin issue spanning several products has no single place to send the
+  // merchant — each one is linked in the list below instead. Offering a
+  // page-level link would have to pick one arbitrarily, and saying StoreRx
+  // "could not tell which product" would be untrue: it knows all five.
+  const perResource = first.remedy === "admin" && shown.length > 1;
   const actions = actionsFor({
     remedy: first.remedy as RemedyKind,
     status,
     suggestion: first.suggestionKind as SuggestionKind | null,
     adminArea: first.adminArea as never,
-    adminRef: shown.length === 1 || first.remedy !== "admin" ? first.adminRef : null,
+    adminRef: perResource ? null : first.adminRef,
   });
 
   return {
@@ -125,7 +130,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     steps: first.steps,
     evidenceValue: shown.length === 1 ? first.evidenceValue : null,
     singlePageUrl: shown.length === 1 ? first.pageUrl : null,
-    destination: actions.secondary,
+    destination: perResource ? null : actions.secondary,
     catalog,
     items,
     scope: scope
@@ -362,10 +367,24 @@ export default function IssueDetail() {
 
       <s-section heading={`Where StoreRx found it (${data.items.length})`}>
         {data.suggestionKind ? (
-          <s-paragraph color="subdued">
-            StoreRx can draft {SUGGESTION_NOUN[data.suggestionKind]} for each of these. Review it,
-            then paste it into Shopify yourself — nothing is changed for you.
-          </s-paragraph>
+          <s-stack direction="block" gap="small-300">
+            <s-paragraph color="subdued">
+              StoreRx can draft {SUGGESTION_NOUN[data.suggestionKind]} for each of these. Review it,
+              then paste it into Shopify yourself — nothing is changed for you.
+            </s-paragraph>
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-icon
+                type={data.credits === 0 ? "alert-circle" : "wand"}
+                tone={data.credits === 0 ? "warning" : "info"}
+                size="small"
+              />
+              <s-text color="subdued">
+                {data.credits === 0
+                  ? "You've used all your AI credits this month. They reset at the start of your next period."
+                  : `Each draft uses 1 AI credit. You have ${data.credits} left this month.`}
+              </s-text>
+            </s-stack>
+          </s-stack>
         ) : (
           data.items.length > 1 && (
             <s-paragraph color="subdued">

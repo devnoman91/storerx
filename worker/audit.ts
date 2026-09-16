@@ -88,11 +88,16 @@ export interface AuditJobOptions {
  * merchant, and the admin GID of the product or collection behind it so the
  * issue can offer a working "Edit in Shopify Admin" link.
  */
-function atPage(findings: Finding[], pageUrl: string, resourceId?: string): Finding[] {
+function atPage(
+  findings: Finding[],
+  pageUrl: string,
+  resource?: { id?: string; title?: string },
+): Finding[] {
   return findings.map((finding) => ({
     ...finding,
     pageUrl,
-    adminRef: finding.adminRef ?? resourceId,
+    adminRef: finding.adminRef ?? resource?.id,
+    targetTitle: finding.targetTitle ?? resource?.title,
   }));
 }
 
@@ -149,7 +154,10 @@ export async function processAuditJob(
 
         scannedUrls.push(target.url);
         run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
-        const pageFindings = atPage(run.findings, target.url, target.resourceId);
+        const pageFindings = atPage(run.findings, target.url, {
+          id: target.resourceId,
+          title: target.resourceTitle,
+        });
         findings.push(...pageFindings);
         pageResults.push({
           url: target.url,

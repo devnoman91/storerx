@@ -24,7 +24,7 @@ import {
   type UnmeasuredReason,
 } from "../components/tokens";
 import { planScanSteps, stepStates } from "../scans/steps";
-import { isMeasurableCategory, type ScoreCategory } from "../scoring";
+import { calculateStoreHealth, type ScoreCategory, type ScorableIssue } from "../scoring";
 import { catalogTitle } from "../issues/wording";
 
 /** How far back "recently verified" looks. */
@@ -130,7 +130,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   await reapStaleAudits(shopId);
 
   const since = new Date(Date.now() - RECENTLY_VERIFIED_DAYS * 24 * 60 * 60 * 1000);
-  const [outstanding, verified, inFlight, latestScan, lastByScope, failedScan, planUsage] =
+  const [outstanding, verified, inFlight, latestScan, lastByScope, completedAudits, failedScan, planUsage] =
     await Promise.all([
       prisma.issue.findMany({
         where: { shopId, status: { in: ["open", "awaiting_verification"] } },
@@ -169,6 +169,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: { shopId, status: "completed" },
         _max: { completedAt: true },
       }),
+      // Which checks this shop has ever had run, and the last speed it
+      // measured. Health is derived from these rather than read back from the
+      // last scan's stored score, so it is always current.
+      prisma.audit.findMany({
+        where: { shopId, status: "completed" },
+        orderBy: { completedAt: "desc" },
+        select: { evaluatedRules: true, performanceScore: true },
+      }),
       prisma.audit.findFirst({
         where: { shopId, status: "failed" },
         orderBy: { createdAt: "desc" },
@@ -197,32 +205,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const running = inFlight.find((audit) => audit.status === "running") ?? inFlight[0] ?? null;
 
-  // A category has no score either because no rule feeds it, or because the
-  // merchant has not scanned the area that would. They read very differently,
-  // and neither is a zero.
-  const categoryScore: Record<ScoreCategory, number | null> = {
-    conversion: latestScan?.conversionScore ?? null,
-    productPages: latestScan?.productPagesScore ?? null,
-    performance: latestScan?.performanceScore ?? null,
-    seo: latestScan?.seoScore ?? null,
-    ux: latestScan?.uxScore ?? null,
-  };
+  // Health, recomputed from what is on the store right now and what has
+  // actually been checked. A category nothing has examined reports no score
+  // rather than a flattering one, and the reason it has none is shown.
+  const evaluatedRules = new Set(completedAudits.flatMap((audit) => audit.evaluatedRules));
+  const lastMeasuredSpeed =
+    completedAudits.find((audit) => audit.performanceScore !== null)?.performanceScore ?? null;
+  const scorable: ScorableIssue[] = outstanding.map((issue) => ({
+    ruleId: issue.ruleId,
+    severity: issue.severity as ScorableIssue["severity"],
+    page: issue.pageType,
+  }));
+  const health = calculateStoreHealth(scorable, {
+    performanceScore: lastMeasuredSpeed,
+    evaluatedRules,
+  });
   const lastScanned = new Map(lastByScope.map((row) => [row.scope, row._max.completedAt]));
   const scopeLabel = (scope: string) => (isScanScope(scope) ? SCAN_SCOPES[scope].label : scope);
 
   return {
     hasScan: Boolean(latestScan),
     health: {
-      overall: latestScan?.overallScore ?? null,
-      categories: CATEGORY_ORDER.map((category) => ({
-        category,
-        score: categoryScore[category],
-        unmeasured: (categoryScore[category] === null
-          ? isMeasurableCategory(category)
-            ? "not-scanned"
-            : "no-checks"
-          : null) as UnmeasuredReason | null,
-      })),
+      // No scan at all means no score, rather than a score built from nothing.
+      overall: completedAudits.length > 0 ? health.overall : null,
+      checksRun: health.categories.reduce((sum, c) => sum + c.checksRun, 0),
+      checksTotal: health.categories.reduce((sum, c) => sum + c.checksTotal, 0),
+      categories: CATEGORY_ORDER.map((category) => {
+        const scored = health.categories.find((c) => c.category === category);
+        return {
+          category,
+          score: scored?.measured ? scored.score : null,
+          checksRun: scored?.checksRun ?? 0,
+          checksTotal: scored?.checksTotal ?? 0,
+          unmeasured: (scored?.measured
+            ? null
+            : (scored?.checksTotal ?? 0) === 0
+              ? "no-checks"
+              : "not-scanned") as UnmeasuredReason | null,
+        };
+      }),
     },
     latestScan: latestScan
       ? {
@@ -347,7 +368,7 @@ function HealthHero({
   onScan,
   busy,
 }: {
-  health: { overall: number | null };
+  health: { overall: number | null; checksRun: number; checksTotal: number };
   latestScan: { label: string; date: string; newCount: number; resolvedCount: number } | null;
   critical: number;
   improvements: number;
@@ -357,6 +378,7 @@ function HealthHero({
   busy: boolean;
 }) {
   const band = typeof health.overall === "number" ? scoreBand(health.overall) : null;
+  const partial = health.checksRun < health.checksTotal;
 
   return (
     <s-section>
@@ -374,6 +396,23 @@ function HealthHero({
               ? band.summary
               : "Scan an area below and StoreRx will examine it, explain what it finds and recommend what to do."}
           </s-paragraph>
+
+          {/* A score from four checks is not a verdict on the whole store, and
+              should not look like one. */}
+          {band && (
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-icon
+                type={partial ? "alert-circle" : "check-circle"}
+                tone={partial ? "caution" : "success"}
+                size="small"
+              />
+              <s-text color="subdued">
+                {partial
+                  ? `Based on ${health.checksRun} of ${health.checksTotal} checks — scan more areas for a fuller picture`
+                  : `Based on all ${health.checksTotal} checks`}
+              </s-text>
+            </s-stack>
+          )}
 
           {(critical > 0 || improvements > 0 || minor > 0 || awaiting > 0) && (
             <s-stack direction="inline" gap="small-300" alignItems="center">
@@ -410,6 +449,8 @@ function HealthHero({
 type CategoryRow = {
   category: ScoreCategory;
   score: number | null;
+  checksRun: number;
+  checksTotal: number;
   unmeasured: UnmeasuredReason | null;
 };
 
@@ -461,7 +502,24 @@ function CategoryScores({
                 )}
 
                 {measured ? (
-                  <s-text color="subdued">{meta.blurb}</s-text>
+                  <s-stack direction="block" gap="small-500">
+                    <s-text color="subdued">{meta.blurb}</s-text>
+                    {/* Say how much of the category this score covers, so a
+                        partial scan cannot read as a verdict on all of it. */}
+                    <s-text color="subdued">
+                      {`Based on ${row.checksRun} of ${row.checksTotal} checks`}
+                    </s-text>
+                    {row.checksRun < row.checksTotal && meta.scope && (
+                      <s-button
+                        variant="tertiary"
+                        icon={AREA_ICON[meta.scope]}
+                        disabled={busy}
+                        onClick={() => onScan(meta.scope as ScanScope)}
+                      >
+                        {`Scan ${SCAN_SCOPES[meta.scope].label}`}
+                      </s-button>
+                    )}
+                  </s-stack>
                 ) : (
                   row.unmeasured === "not-scanned" &&
                   meta.scope && (

@@ -261,23 +261,16 @@ export function SuggestedCopy({
     );
   }
 
-  if (disabledReason) {
-    return (
-      <s-stack direction="block" gap="small-500">
-        <s-button icon="wand" disabled>
-          {labels.draft}
-        </s-button>
-        <s-text color="subdued">{disabledReason}</s-text>
-      </s-stack>
-    );
-  }
-
+  // The credit cost is stated once above the list rather than on every row,
+  // which on a five-product issue was five copies of the same sentence.
   return (
-    <s-stack direction="inline" gap="small-300" alignItems="center">
-      <s-button variant="secondary" icon="wand" disabled={busy} onClick={onDraft}>
-        {labels.draft}
-      </s-button>
-      <s-text color="subdued">Uses 1 AI credit. You review it before anything changes.</s-text>
-    </s-stack>
+    <s-button
+      variant="secondary"
+      icon="wand"
+      disabled={busy || Boolean(disabledReason)}
+      onClick={onDraft}
+    >
+      {labels.draft}
+    </s-button>
   );
 }

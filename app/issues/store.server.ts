@@ -215,11 +215,15 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
         });
       }
 
-      // Store health after this scan: every issue still open, scored together.
-      // A single-area scan only changes its own area's issues, so the store
-      // score moves by what this scan actually found or cleared.
+      // Store health after this scan: every issue still on the store, scored
+      // together. A single-area scan only changes its own area's issues, so
+      // the score moves by what this scan actually found or cleared.
+      //
+      // Issues awaiting verification count too. The merchant says they fixed
+      // them, but no scan has confirmed it — improving the score on their word
+      // would contradict the whole verification model.
       const open = await tx.issue.findMany({
-        where: { shopId, status: "open" },
+        where: { shopId, status: { in: ["open", "awaiting_verification"] } },
         select: { ruleId: true, severity: true, pageType: true },
       });
       const scorable: ScorableIssue[] = open.map((issue) => ({
@@ -227,10 +231,14 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
         severity: issue.severity as ScorableIssue["severity"],
         page: issue.pageType,
       }));
-      const health = calculateStoreHealth(
-        scorable,
-        { performanceScore: scan.performanceScore ?? (await lastMeasuredSpeed(tx, shopId, auditId)) },
-      );
+      // Every rule this shop has ever had run, so a category is only scored
+      // when something actually checked it. `previouslyEvaluated` also holds
+      // rule IDs inferred from known issues, which is the right basis here too.
+      const everEvaluated = new Set([...previouslyEvaluated, ...scan.evaluatedRules]);
+      const health = calculateStoreHealth(scorable, {
+        performanceScore: scan.performanceScore ?? (await lastMeasuredSpeed(tx, shopId, auditId)),
+        evaluatedRules: everEvaluated,
+      });
       // An unmeasured category is stored as null, never as a number. A zero
       // would read as "this store scored nothing" instead of "nothing was
       // measured", and the dashboard shows the two very differently.

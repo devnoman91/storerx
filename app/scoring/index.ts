@@ -7,6 +7,8 @@
 
 import type { PageType, Severity } from "../rules/types";
 import { SEVERITY_WEIGHTS } from "../rules/types";
+import { allRules, CATALOG_IMAGE_RULE_IDS } from "../rules";
+import { isCatalogRuleReachable, isRuleReachable } from "../scans/scopes";
 
 /**
  * The only parts of a finding scoring uses. Lets the store score be computed
@@ -28,11 +30,16 @@ export interface CategoryScore {
   mediumCount: number;
   lowCount: number;
   /**
-   * False when the category has no measurement behind it — e.g. Lighthouse
-   * failed. Unmeasured categories are excluded from `overall` rather than
-   * counted as zero, which would report a store as worse than observed.
+   * False when the category has no measurement behind it — no scan has run
+   * any of its checks, or Lighthouse failed. Unmeasured categories are
+   * excluded from `overall` rather than counted as zero, which would report a
+   * store as worse than observed. Scoring them 100 instead would be worse
+   * still: it reports a category as perfect when nothing looked at it.
    */
   measured: boolean;
+  /** Checks in this category that a scan has actually run, out of the total. */
+  checksRun: number;
+  checksTotal: number;
 }
 
 export interface StoreHealthScore {
@@ -72,6 +79,67 @@ const MEASURABLE: ReadonlySet<ScoreCategory> = new Set(Object.values(PAGE_TO_CAT
 
 export function isMeasurableCategory(category: ScoreCategory): boolean {
   return MEASURABLE.has(category);
+}
+
+/**
+ * Every rule that exists, and the category it reports into.
+ *
+ * Built from the rule set rather than maintained by hand, so a category can
+ * never claim coverage from a rule that was deleted, or miss a new one. The
+ * catalog image checks are plain functions rather than Rule objects, so they
+ * are added explicitly.
+ */
+const RULE_CATEGORY: ReadonlyMap<string, ScoreCategory> = (() => {
+  const map = new Map<string, ScoreCategory>();
+  for (const rule of allRules) {
+    const page = Array.isArray(rule.page) ? rule.page[0] : rule.page;
+    // A rule no scan can reach must not count towards a category's total, or
+    // its coverage could never read as complete.
+    if (!isRuleReachable(rule.id, page)) continue;
+    map.set(rule.id, PAGE_TO_CATEGORY[page]);
+  }
+  for (const ruleId of CATALOG_IMAGE_RULE_IDS) {
+    if (!isCatalogRuleReachable(ruleId)) continue;
+    map.set(ruleId, PAGE_TO_CATEGORY.images);
+  }
+  return map;
+})();
+
+/** Rules that exist but no scan can run. Asserted against in tests. */
+export const UNREACHABLE_RULE_IDS: readonly string[] = allRules
+  .map((rule) => ({ id: rule.id, page: Array.isArray(rule.page) ? rule.page[0] : rule.page }))
+  .filter((rule) => !isRuleReachable(rule.id, rule.page))
+  .map((rule) => rule.id);
+
+/** How many checks a category has in total. */
+export const CATEGORY_CHECK_COUNTS: Readonly<Record<ScoreCategory, number>> = (() => {
+  const counts: Record<ScoreCategory, number> = {
+    conversion: 0,
+    ux: 0,
+    performance: 0,
+    seo: 0,
+    productPages: 0,
+  };
+  for (const category of RULE_CATEGORY.values()) counts[category] += 1;
+  return counts;
+})();
+
+/** Checks run per category, from the rule IDs a shop's scans have evaluated. */
+export function categoryCoverage(
+  evaluatedRules: Iterable<string>,
+): Record<ScoreCategory, number> {
+  const run: Record<ScoreCategory, number> = {
+    conversion: 0,
+    ux: 0,
+    performance: 0,
+    seo: 0,
+    productPages: 0,
+  };
+  for (const ruleId of new Set(evaluatedRules)) {
+    const category = RULE_CATEGORY.get(ruleId);
+    if (category) run[category] += 1;
+  }
+  return run;
 }
 
 // Maximum penalty per category (prevents score from going below 0)
@@ -129,10 +197,21 @@ function calculateCategoryScore(findings: ScorableIssue[]): CategoryScore {
     mediumCount: counts.medium,
     lowCount: counts.low,
     measured: true,
+    checksRun: 0,
+    checksTotal: 0,
   };
 }
 
 export interface StoreHealthOptions {
+  /**
+   * Rule IDs any scan of this shop has run to completion. A category none of
+   * whose checks have run is reported as unmeasured — without this, a store
+   * that has only had its SEO scanned is told its images score 100, which no
+   * scan ever looked at.
+   *
+   * Omitted means "assume everything ran", which is only correct in tests.
+   */
+  evaluatedRules?: ReadonlySet<string>;
   /**
    * Measured Lighthouse score (mobile 70 / desktop 30). FEATURES.md §3 makes
    * Lighthouse the source for the Performance category, so when it is supplied
@@ -168,11 +247,25 @@ export function calculateStoreHealth(
   }
 
   // Calculate each category score
+  const coverage = options.evaluatedRules
+    ? categoryCoverage(options.evaluatedRules)
+    : CATEGORY_CHECK_COUNTS;
+
   const categories: CategoryScore[] = Object.entries(byCategory).map(([cat, catFindings]) => {
     const score = calculateCategoryScore(catFindings);
     score.category = cat as ScoreCategory;
+    score.checksRun = coverage[score.category];
+    score.checksTotal = CATEGORY_CHECK_COUNTS[score.category];
+
     // No rule reports into this category, so there is nothing behind a score.
     if (!MEASURABLE.has(score.category)) {
+      score.measured = false;
+      score.score = 0;
+      return score;
+    }
+
+    // No scan has run any of its checks. A score here would be invented.
+    if (score.checksRun === 0) {
       score.measured = false;
       score.score = 0;
       return score;

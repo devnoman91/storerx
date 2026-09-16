@@ -111,9 +111,12 @@ export const CATEGORY: Record<ScoreCategory, { label: string; blurb: string; sco
     scope: "speed",
   },
   seo: {
+    // Fed entirely by the image checks — the SEO scan's own rules report into
+    // Conversion and Product pages, so pointing here at "seo" offered a scan
+    // that would not move this score at all.
     label: "SEO & images",
-    blurb: "Titles, descriptions and image quality",
-    scope: "seo",
+    blurb: "Image quality across your catalog",
+    scope: "images",
   },
   ux: {
     label: "Usability",

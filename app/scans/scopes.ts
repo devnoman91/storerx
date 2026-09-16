@@ -176,3 +176,29 @@ export function needsStorefront(scope: ScanScope): boolean {
 export function scopeForRule(ruleId: string): ScanScope | null {
   return SCAN_SCOPE_ORDER.find((scope) => SCAN_SCOPES[scope].includesRule(ruleId)) ?? null;
 }
+
+/**
+ * Whether any scan can actually evaluate a rule.
+ *
+ * A scope including a rule by ID is not enough: the scope also has to fetch
+ * what the rule reads. `img.lazy` is a page rule sitting in the image scopes,
+ * which read the Admin API and fetch no pages, so nothing ever runs it.
+ * Coverage counts would otherwise use a denominator that can never be reached.
+ */
+export function isRuleReachable(ruleId: string, page: string): boolean {
+  return SCAN_SCOPE_ORDER.some((scope) => {
+    const spec = SCAN_SCOPES[scope];
+    if (!spec.includesRule(ruleId)) return false;
+    if (page === "perf") return spec.performance;
+    if (page === "checkout") return spec.checkout;
+    if (page === "images") return spec.pages.includes("homepage" as StorefrontArea);
+    return spec.pages.includes(page as StorefrontArea);
+  });
+}
+
+/** Catalog image checks run from Admin data, so they need no page fetch. */
+export function isCatalogRuleReachable(ruleId: string): boolean {
+  return SCAN_SCOPE_ORDER.some(
+    (scope) => SCAN_SCOPES[scope].includesRule(ruleId) && SCAN_SCOPES[scope].catalogImages,
+  );
+}

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CATEGORY_CHECK_COUNTS, UNREACHABLE_RULE_IDS } from "../../app/scoring";
 import {
   ANALYSIS_STEP,
   AREA_STEP,
@@ -7,7 +8,12 @@ import {
   planScanSteps,
   stepStates,
 } from "../../app/scans/steps";
-import { allRules, getRulesForPage, runRulesDetailed } from "../../app/rules";
+import {
+  CATALOG_IMAGE_RULE_IDS,
+  allRules,
+  getRulesForPage,
+  runRulesDetailed,
+} from "../../app/rules";
 import { imageRules } from "../../app/rules/images";
 import { perfRules } from "../../app/rules/perf";
 import {
@@ -124,5 +130,26 @@ describe("scan steps", () => {
     const steps = planScanSteps("images");
     expect(stepStates(steps, null)).toEqual(["pending", "pending"]);
     expect(stepStates(steps, "Something else entirely")).toEqual(["pending", "pending"]);
+  });
+});
+
+describe("rule reachability", () => {
+  it("has exactly one rule no scan can run, and it is a known one", () => {
+    // img.lazy is a page rule living in the image scopes, which read the Admin
+    // API and fetch no pages. Listed here so a newly stranded rule fails the
+    // build rather than quietly inflating a category's check count.
+    expect(UNREACHABLE_RULE_IDS).toEqual(["img.lazy"]);
+  });
+
+  it("leaves unreachable rules out of category totals", () => {
+    const reachableImageRules = CATALOG_IMAGE_RULE_IDS.length;
+    expect(CATEGORY_CHECK_COUNTS.seo).toBe(reachableImageRules);
+  });
+
+  it("counts every reachable rule in exactly one category", () => {
+    const counted = Object.values(CATEGORY_CHECK_COUNTS).reduce((sum, n) => sum + n, 0);
+    expect(counted).toBe(
+      allRules.length - UNREACHABLE_RULE_IDS.length + CATALOG_IMAGE_RULE_IDS.length,
+    );
   });
 });
