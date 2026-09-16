@@ -75,7 +75,7 @@ model Shop {
 
   // Relations
   audits           Audit[]
-  fixes            Fix[]
+  suggestions      Suggestion[]
   aiUsage          AiUsage[]
   explanationCache ExplanationCache[]
   issues           Issue[]
@@ -169,11 +169,17 @@ model Finding {
   evidenceType  String? // selector, text, screenshot
   evidenceValue String?
 
-  // Fix info
-  fixableByAI Boolean @default(false)
-  fixType     String? // product_description, alt_text, etc.
-  targetId    String? // Resource ID (product, image, etc.)
-  targetTitle String?
+  // How the merchant acts on this (app/remedies). StoreRx never writes to the
+  // store, so this records where they go, not what it would change.
+  remedy         String  @default("messaging") // admin, settings, theme, messaging
+  adminArea      String? // product, collection, settings, theme
+  adminRef       String? // GID, settings page slug, or theme template
+  suggestionKind String? // copy StoreRx can draft: alt_text, seo_title, ...
+  targetId       String? // Resource ID (product, image, etc.)
+  targetTitle    String?
+
+  // AI: ordered steps for implementing the recommendation.
+  steps String[] @default([])
 
   // Status
   status String @default("open") // open, fixed, dismissed
@@ -210,34 +216,41 @@ model PageScore {
   lastScannedAt DateTime @default(now())
 }
 
-// AI fix (preview → apply → undo)
-model Fix {
+// Copy StoreRx drafted for the merchant to review and paste in themselves.
+// Never applied to the store: there is no apply or undo, by design. Drafted
+// one item at a time, only when the merchant asks, so a large catalog cannot
+// silently consume a plan's AI allowance.
+model Suggestion {
   id     String @id @default(cuid())
   shopId String
   shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
-  // Fix type and target
-  type        String // product_description, seo_title, alt_text, etc.
-  targetId    String // Resource ID
-  targetTitle String
+  // The issue this belongs to, and the exact resource inside it.
+  issueId     String
+  issue       Issue   @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  kind        String // alt_text, seo_title, seo_meta, product_description
+  targetId    String // MediaImage or Product GID
+  targetTitle String?
+  imageUrl    String?
 
-  // Content
-  before String // Original value
-  after  String // New value (editable in preview)
+  // This table is also a queue: the worker claims `pending` rows the same way
+  // it claims audits.
+  status   String @default("pending") // pending, ready, failed
+  attempts Int    @default(0)
 
-  // Status
-  status String @default("preview") // preview, applied, undone
+  /// The value in the store when the draft was made, so the UI can show the
+  /// merchant what they are replacing.
+  current   String?
+  suggested String?
+  error     String?
 
-  // Generation tracking
-  generationCount Int @default(1)
-
-  // Timestamps
   createdAt DateTime  @default(now())
-  appliedAt DateTime?
-  undoneAt  DateTime?
+  readyAt   DateTime?
 
-  // Undo expires 30 days after apply
-  undoExpiresAt DateTime?
+  // One live draft per resource per kind; re-drafting replaces it.
+  @@unique([issueId, targetId, kind])
+  @@index([status, createdAt])
+  @@index([shopId, createdAt])
 }
 
 // AI usage tracking for cost management
@@ -284,6 +297,7 @@ model ExplanationCache {
   contextHash    String
   explanation    String
   recommendation String
+  steps          String[] @default([])
   updatedAt      DateTime @updatedAt
 
   @@unique([shopId, ruleId])
@@ -310,10 +324,22 @@ model Issue {
   targetId       String?
   targetTitle    String?
   imageUrl       String?
-  fixableByAI    Boolean @default(false)
-  fixType        String?
 
-  status          String    @default("open") // open, resolved
+  // Where and how the merchant acts on this (app/remedies).
+  remedy         String  @default("messaging") // admin, settings, theme, messaging
+  adminArea      String? // product, collection, settings, theme
+  adminRef       String? // GID, settings page slug, or theme template
+  suggestionKind String? // copy StoreRx can draft: alt_text, seo_title, ...
+
+  // AI: ordered steps for implementing the recommendation.
+  steps String[] @default([])
+
+  // open → awaiting_verification (merchant says they fixed it) → resolved
+  // (a scan confirmed it). A scan that still finds it sends it back to open
+  // and stamps verificationFailedAt, so the UI can say the check did not pass.
+  status               String    @default("open")
+  markedResolvedAt     DateTime?
+  verificationFailedAt DateTime?
   firstSeenAt     DateTime
   lastSeenAt      DateTime
   lastSeenAuditId String
@@ -323,6 +349,8 @@ model Issue {
   openedAsNew     Boolean   @default(false)
   resolvedAt      DateTime?
   resolvedAuditId String?
+
+  suggestions Suggestion[]
 
   @@unique([shopId, fingerprint])
   @@index([shopId, status])

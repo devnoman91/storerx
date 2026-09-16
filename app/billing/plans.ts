@@ -16,8 +16,8 @@ export type PlanKey = "free" | "starter" | "growth" | "pro";
 export interface PlanLimits {
   /** Scans per usage period, of any area. null = unlimited. */
   scans: number | null;
-  /** New AI explanations per usage period. Always capped, to protect margins. */
-  aiExplanations: number;
+  /** New AI credits per usage period: recommendations and drafted copy. Always capped, to protect margins. */
+  aiCredits: number;
 }
 
 export interface PlanSpec {
@@ -43,32 +43,32 @@ export const PLANS: Record<PlanKey, PlanSpec> = {
     label: "Free",
     price: 0,
     summary: "See where your store loses sales",
-    features: ["8 scans a month — one of every area", "5 AI explanations a month"],
-    limits: { scans: 8, aiExplanations: 5 },
+    features: ["9 scans a month — one of every area", "5 AI recommendations a month"],
+    limits: { scans: 9, aiCredits: 5 },
   },
   starter: {
     key: "starter",
     label: "Starter",
     price: 19,
     summary: "Weekly check-ups for a growing store",
-    features: ["60 scans a month — every area, weekly", "100 AI explanations a month"],
-    limits: { scans: 60, aiExplanations: 100 },
+    features: ["60 scans a month — every area, weekly", "100 AI recommendations a month"],
+    limits: { scans: 60, aiCredits: 100 },
   },
   growth: {
     key: "growth",
     label: "Growth",
     price: 49,
     summary: "Scan as often as you change your store",
-    features: ["Unlimited scans", "500 AI explanations a month"],
-    limits: { scans: null, aiExplanations: 500 },
+    features: ["Unlimited scans", "500 AI recommendations a month"],
+    limits: { scans: null, aiCredits: 500 },
   },
   pro: {
     key: "pro",
     label: "Pro",
     price: 99,
     summary: "For high-volume stores and agencies",
-    features: ["Unlimited scans", "2,000 AI explanations a month", "Priority support"],
-    limits: { scans: null, aiExplanations: 2000 },
+    features: ["Unlimited scans", "2,000 AI recommendations a month", "Priority support"],
+    limits: { scans: null, aiCredits: 2000 },
   },
 };
 
@@ -145,7 +145,7 @@ export function allowance(used: number, limit: number | null): Allowance {
 
 export interface PeriodUsage {
   scans: number;
-  aiExplanations: number;
+  aiCredits: number;
 }
 
 /** Whether another scan fits the plan. */

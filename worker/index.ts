@@ -28,10 +28,12 @@ import { collectCatalogImages } from "../app/collectors/images";
 import { NonRetryableError, StorefrontLockedError } from "../app/errors";
 import { EXPLAIN_PROMPT_VERSION, explainFindings } from "../app/ai/prompts";
 import { logUsage } from "../app/ai/generate";
-import { aiExplanationsRemaining } from "../app/billing/billing.server";
+import { aiCreditsRemaining } from "../app/billing/billing.server";
 import type { Shop } from "@prisma/client";
 import { SEVERITY_WEIGHTS, type Finding, type ShopData } from "../app/rules/types";
 import { processAuditJob, type AuditProgress } from "./audit";
+import { drainSuggestions } from "./suggestions";
+import { reapStaleDrafts } from "../app/suggestions/queue.server";
 import { recordScan } from "../app/issues/store.server";
 import { SCAN_SCOPES, isScanScope, needsStorefront, type ScanScope } from "../app/scans/scopes";
 import {
@@ -107,7 +109,7 @@ async function explainWithCache(
 
   // Plan allowance (FEATURES.md §11). Findings past it still show, with the
   // rule's own wording, and are explained once allowance is available again.
-  const remaining = await aiExplanationsRemaining(shop);
+  const remaining = await aiCreditsRemaining(shop);
   if (remaining === 0) {
     console.log(`[worker] ${shop.domain} has no AI explanations left this period; ${misses.length} rule(s) unexplained`);
     return { explanations, generated: 0, reused: hits.size };
@@ -126,7 +128,11 @@ async function explainWithCache(
     });
     const fresh = result.data.findings.filter((item) => requested.has(item.ruleId));
     for (const item of fresh) {
-      explanations.set(item.ruleId, { explanation: item.explanation, recommendation: item.recommendation });
+      explanations.set(item.ruleId, {
+        explanation: item.explanation,
+        recommendation: item.recommendation,
+        steps: item.steps,
+      });
     }
     await prisma.$transaction(
       fresh.map((item) =>
@@ -138,8 +144,14 @@ async function explainWithCache(
             contextHash,
             explanation: item.explanation,
             recommendation: item.recommendation,
+            steps: item.steps,
           },
-          update: { contextHash, explanation: item.explanation, recommendation: item.recommendation },
+          update: {
+            contextHash,
+            explanation: item.explanation,
+            recommendation: item.recommendation,
+            steps: item.steps,
+          },
         }),
       ),
     );
@@ -248,7 +260,7 @@ async function drain(): Promise<boolean> {
 }
 
 async function main() {
-  console.log(`[worker] ${WORKER_ID} polling for audits every ${IDLE_POLL_MS / 1000}s`);
+  console.log(`[worker] ${WORKER_ID} polling for scans and drafts every ${IDLE_POLL_MS / 1000}s`);
 
   // On its own timer rather than in the poll loop: an audit takes minutes, and
   // the dashboard must not decide the worker is dead while it is mid-audit.
@@ -262,10 +274,15 @@ async function main() {
       if (Date.now() - lastReapAt > REAP_INTERVAL_MS) {
         const reaped = await reapStaleAudits();
         if (reaped > 0) console.log(`[worker] reclaimed ${reaped} stalled audit(s)`);
+        const abandoned = await reapStaleDrafts();
+        if (abandoned > 0) console.log(`[worker] gave up on ${abandoned} stalled draft(s)`);
         lastReapAt = Date.now();
       }
 
-      const didWork = await drain();
+      // Drafts first: a merchant is sitting on the issue page waiting for one,
+      // while a scan they started minutes ago can wait a few more seconds.
+      const drafted = await drainSuggestions(() => shuttingDown);
+      const didWork = (await drain()) || drafted;
       if (didWork) continue; // more may have arrived while we worked
     } catch (error) {
       // Never let a transient DB error kill the loop.

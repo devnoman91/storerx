@@ -16,7 +16,6 @@ Source of truth: `docs/FEATURES.md` sections 3–8. Read the relevant section be
      id: 'prod.reviews.fold',
      page: 'product',
      severity: 'high',
-     fixableByAI: false,
      title: 'No reviews above the fold',
      check(ctx) {
        // ctx.html (cheerio), ctx.mobileScreenshot, ctx.admin (typed data), ctx.lighthouse
@@ -32,15 +31,29 @@ Source of truth: `docs/FEATURES.md` sections 3–8. Read the relevant section be
 
 ## Changing scores
 
-Weights live in `app/scoring/weights.ts`. Score = 100 − Σ(weight × count), floor 0, per category. Update §3 of the spec if weights change. Overall = weighted mean (Conversion 30, Product Pages 25, Performance 20, UX 15, SEO 10).
+Weights live in `app/scoring/index.ts` (`SEVERITY_WEIGHTS` in `app/rules/types.ts`, category weights
+in `CATEGORY_WEIGHTS`). Score = 100 − Σ(weight × count) per category, floor 0, counting each rule
+once however many pages or images it hit (`collapseByRule`). Overall = weighted mean over
+*measured* categories only. Update §3 of the spec if weights change.
 
-## Adding a "Fix with AI" type
+## Adding drafted copy (a `SuggestionKind`)
 
-1. Prompt file `app/ai/prompts/<name>.ts` exporting `{ system, build(ctx), schema (zod) }`.
-2. Call only via `generate()`; never import `openai` directly.
-3. Fix handler `app/fixes/<name>.ts` with `apply(fix)` and `undo(fix)`; both use Admin GraphQL validated with the Shopify skill.
-4. `before` snapshot is mandatory. Status flow: `preview → approved → applied | discarded`, `applied → undone`.
-5. Gate by plan in `app/billing/limits.ts`. Add to §8 table in the spec.
+StoreRx never applies a change. It can *draft* copy for a merchant to review and paste in
+themselves, and only for fields Shopify actually exposes.
+
+1. Prompt file `app/ai/prompts/<name>.ts`; call only via `generate()`, never import `openai` directly.
+2. Add the kind to `SuggestionKind` in `app/remedies/types.ts` and a label set in
+   `app/remedies/actions.ts` (`SUGGESTION_LABELS`).
+3. Point the rule at it in `app/remedies/catalog.ts` — `suggestion` is only valid on `kind: "admin"`.
+4. Handle it in `worker/suggestions.ts`: read the current value from Admin GraphQL, generate,
+   store `current` + `suggested`. Never write back.
+5. Drafts cost one AI credit and are checked against `aiCreditsRemaining` before generating.
+
+## Adding a rule's remedy
+
+Every rule ID needs an entry in `app/remedies/catalog.ts` saying where the merchant solves it:
+`admin` (a Shopify field), `settings` (a Shopify setting), `theme` (theme editor) or `messaging`
+(copy judgement). `tests/remedies` fails the build if one is missing or points nowhere.
 
 ## Prompt guidelines
 
@@ -56,4 +69,6 @@ Weights live in `app/scoring/weights.ts`. Score = 100 − Σ(weight × count), f
 - [ ] Evidence string is human-readable and specific
 - [ ] Spec tables updated
 - [ ] No OpenAI/Playwright/Lighthouse call in a route loader/action
+- [ ] Rule has a remedy in `app/remedies/catalog.ts`
+- [ ] No UI copy promises StoreRx will change the store
 - [ ] GraphQL validated

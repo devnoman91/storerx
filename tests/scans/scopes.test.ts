@@ -43,9 +43,9 @@ describe("scan scopes", () => {
   });
 
   it("the areas together run every rule the scanner has", () => {
-    // Speed and checkout have their own area now that there is no full scan.
-    const scanned = [...allRules, ...perfRules].filter((rule) => rule.page !== "cart");
-    for (const rule of scanned) {
+    // Speed and checkout have their own area now that there is no full scan,
+    // and cart rules have one too — without it they could never run.
+    for (const rule of [...allRules, ...perfRules]) {
       const owners = SCAN_SCOPE_ORDER.filter((scope) => SCAN_SCOPES[scope].includesRule(rule.id));
       expect(owners, rule.id).toHaveLength(1);
     }
@@ -54,7 +54,13 @@ describe("scan scopes", () => {
   });
 
   it("only page scans need the storefront password", () => {
-    expect(SCAN_SCOPE_ORDER.filter(needsStorefront)).toEqual(["homepage", "product", "collection", "seo"]);
+    expect(SCAN_SCOPE_ORDER.filter(needsStorefront)).toEqual([
+      "homepage",
+      "product",
+      "collection",
+      "cart",
+      "seo",
+    ]);
   });
 
   it("rejects unknown scope names, and the retired full scan, from the form", () => {

@@ -212,7 +212,7 @@ export async function getShopUsage(shop: BillingShop, now: Date = new Date()): P
     plan: planOf(shop.plan),
     periodStart,
     resetsAt: nextPeriodStart(anchor, now),
-    usage: { scans, aiExplanations: ai._sum.units ?? 0 },
+    usage: { scans, aiCredits: ai._sum.units ?? 0 },
   };
 }
 
@@ -224,10 +224,10 @@ export async function checkScanAllowed(shop: BillingShop): Promise<ScanCheck> {
   return result.allowed ? { allowed: true } : { allowed: false, message: scanLimitMessage(plan, resetsAt) };
 }
 
-/** New AI explanations the shop may still generate this period. */
-export async function aiExplanationsRemaining(shop: BillingShop): Promise<number> {
+/** AI credits the shop may still spend this period, on explanations or drafts. */
+export async function aiCreditsRemaining(shop: BillingShop): Promise<number> {
   const { plan, usage } = await getShopUsage(shop);
-  return Math.max(0, plan.limits.aiExplanations - usage.aiExplanations);
+  return Math.max(0, plan.limits.aiCredits - usage.aiCredits);
 }
 
 export { PLANS };

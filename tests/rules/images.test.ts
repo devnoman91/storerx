@@ -10,6 +10,7 @@ import {
 } from "../../app/rules/images";
 import type { Finding } from "../../app/rules/types";
 import { calculateStoreHealth, collapseByRule } from "../../app/scoring";
+import { remedyForRule } from "../../app/remedies/catalog";
 
 const catalog = JSON.parse(
   readFileSync(join(__dirname, "..", "fixtures", "images", "catalog.json"), "utf8"),
@@ -41,7 +42,9 @@ describe("per-image checks", () => {
       "gid://shopify/MediaImage/31",
       "gid://shopify/MediaImage/32",
     ]);
-    expect(alt.every((f) => f.fixableByAI && f.fixType === "alt_text")).toBe(true);
+    // Alt text is edited on the product, so every finding carries that link.
+    expect(alt.every((f) => f.adminRef === product("Mixed Mug").id)).toBe(true);
+    expect(remedyForRule("img.alt")).toMatchObject({ kind: "admin", suggestion: "alt_text" });
   });
 
   it("flags images too small to zoom", () => {
@@ -119,7 +122,6 @@ describe("scoring catalog findings", () => {
       page: "images",
       severity: "medium",
       title: "Image missing alt text",
-      fixableByAI: true,
       targetId: `gid://shopify/MediaImage/${i}`,
     }));
 
@@ -140,7 +142,6 @@ describe("scoring catalog findings", () => {
       page: "product",
       severity: "high",
       title: "Reviews are below the fold on mobile",
-      fixableByAI: false,
       pageUrl: `https://shop.myshopify.com/products/${id}`,
     }));
     expect(collapseByRule(pageFindings)).toHaveLength(1);

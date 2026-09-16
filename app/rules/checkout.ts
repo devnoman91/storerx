@@ -12,7 +12,6 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "high",
     description: "Shop Pay / Apple Pay / Google Pay enabled",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
@@ -32,7 +31,6 @@ export const checkoutRules: Rule[] = [
             type: "text",
             value: "Enable Shop Pay, Apple Pay, or Google Pay to reduce friction",
           },
-          fixableByAI: false,
         };
       }
       return null;
@@ -44,7 +42,6 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "high",
     description: "Guest checkout allowed",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
@@ -59,7 +56,6 @@ export const checkoutRules: Rule[] = [
             type: "text",
             value: "Forcing account creation causes abandonment",
           },
-          fixableByAI: false,
         };
       }
       return null;
@@ -71,7 +67,6 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "low",
     description: "At least 2 shipping options",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
@@ -86,7 +81,6 @@ export const checkoutRules: Rule[] = [
             type: "text",
             value: "Offer standard and express shipping options",
           },
-          fixableByAI: false,
         };
       }
       return null;
@@ -98,7 +92,6 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "medium",
     description: "At least 2 payment methods",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
@@ -113,7 +106,6 @@ export const checkoutRules: Rule[] = [
             type: "text",
             value: "More payment options reduce checkout friction",
           },
-          fixableByAI: false,
         };
       }
       return null;
@@ -125,7 +117,6 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "low",
     description: "Tipping enabled on non-service store",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
@@ -142,7 +133,6 @@ export const checkoutRules: Rule[] = [
             type: "text",
             value: "Tipping may confuse customers on product-only stores",
           },
-          fixableByAI: false,
         };
       }
       return null;

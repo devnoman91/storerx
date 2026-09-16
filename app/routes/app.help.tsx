@@ -14,17 +14,17 @@ const SETUP_STEPS: { title: string; items: string[] }[] = [
   {
     title: "Run your first scan",
     items: [
-      "Open Dashboard and pick an area to scan: homepage, product pages, collections, SEO, images, alt text, speed or checkout.",
+      "Open Dashboard and pick an area to scan: homepage, product pages, collections, cart, SEO, images, alt text, speed or checkout.",
       "A scan takes a minute or two. You can leave the page — results appear when it finishes.",
-      "Issues are grouped into Fix Now, Improvements and Minor, with what each one affects. Scan each area once to see the whole store.",
+      "Issues are grouped into Fix first, Worth improving and Minor. Open one to see why it matters, what StoreRx recommends, and how to carry it out. Scan each area once to see the whole store.",
     ],
   },
   {
-    title: "Re-check after a fix",
+    title: "Make the change, then have StoreRx verify it",
     items: [
-      "After you fix something, scan just the area you changed.",
-      "A scan only updates issues in its own area, so nothing else is disturbed. Fixed issues move to Fixed in the last 14 days.",
-      "History lists every scan with its score, new issues and fixed issues.",
+      "Every issue tells you where the change is made: Shopify admin, your Shopify settings, your theme editor, or your storefront copy. StoreRx never edits your store.",
+      "For alt text, SEO titles, meta descriptions and product descriptions, StoreRx can draft the copy for you to review and paste in yourself.",
+      "Once you have made the change, mark the issue as resolved and re-scan that area. StoreRx confirms it and marks it Verified — or tells you it is still there.",
     ],
   },
   {
@@ -40,7 +40,7 @@ const SETUP_STEPS: { title: string; items: string[] }[] = [
 const FAQS: [string, string][] = [
   [
     "Does StoreRx change my store?",
-    "No. Scans only read your store. StoreRx blocks appear on your storefront only when you add them in the theme editor, and your theme files are never edited.",
+    "No, and it never will. StoreRx reads your store, explains what it finds and recommends what to do — you make every change yourself. Copy it drafts for you is a suggestion to review, never applied. StoreRx blocks appear on your storefront only when you add them in the theme editor, and your theme files are never edited.",
   ],
   [
     "Why can't StoreRx measure my speed?",
@@ -51,12 +51,16 @@ const FAQS: [string, string][] = [
     "Issues are updated when StoreRx checks that area again. Run a scan for the area you changed. Product issues are checked on your top products, so a product that is no longer sampled keeps its last result.",
   ],
   [
+    "What do AI credits get used on?",
+    "Writing the recommendation the first time StoreRx sees an issue, and drafting copy when you ask for it. Re-scanning an area you have already scanned costs no credits.",
+  ],
+  [
     "How are scores calculated?",
     "Each rule that finds a problem lowers its category score by its impact: high, medium or low. A problem found on many pages counts once, so larger stores aren't penalised for having more pages.",
   ],
   [
     "What does each plan include?",
-    `Plans set how many scans and AI explanations you get each month. Paid plans start with a ${TRIAL_DAYS}-day free trial. See Plans & billing for details.`,
+    `Plans set how many scans and AI credits you get each month. Paid plans start with a ${TRIAL_DAYS}-day free trial. See Plans & billing for details.`,
   ],
   [
     "What data does StoreRx store?",

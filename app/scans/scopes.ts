@@ -12,6 +12,7 @@ export type ScanScope =
   | "homepage"
   | "product"
   | "collection"
+  | "cart"
   | "seo"
   | "images"
   | "alt"
@@ -20,7 +21,7 @@ export type ScanScope =
   /** Retired: scans recorded before the store was scanned area by area. */
   | "full";
 
-export type StorefrontArea = "homepage" | "collection" | "product";
+export type StorefrontArea = "homepage" | "collection" | "product" | "cart";
 
 export interface ScopeSpec {
   label: string;
@@ -84,6 +85,15 @@ export const SCAN_SCOPES: Record<ScanScope, ScopeSpec> = {
     checkout: false,
     includesRule: (id) => id.startsWith("coll.") && !SEO_RULES.has(id),
   },
+  cart: {
+    label: "Cart",
+    description: "Trust badges, upsells, express checkout and free-shipping progress",
+    pages: ["cart"],
+    catalogImages: false,
+    performance: false,
+    checkout: false,
+    includesRule: (id) => id.startsWith("cart."),
+  },
   seo: {
     label: "SEO",
     description: "Page titles, meta descriptions, structured data, collection text",
@@ -136,6 +146,7 @@ export const SCAN_SCOPE_ORDER: ScanScope[] = [
   "homepage",
   "product",
   "collection",
+  "cart",
   "seo",
   "images",
   "alt",
@@ -155,4 +166,13 @@ export function isSelectableScope(value: unknown): value is ScanScope {
 /** Whether this scope needs storefront HTML (and so the storefront password). */
 export function needsStorefront(scope: ScanScope): boolean {
   return SCAN_SCOPES[scope].pages.length > 0;
+}
+
+/**
+ * The area a merchant re-scans to verify a fix for this rule. Derived from the
+ * scopes themselves rather than a second hand-maintained table, so a rule can
+ * never be listed under an area that would not actually re-check it.
+ */
+export function scopeForRule(ruleId: string): ScanScope | null {
+  return SCAN_SCOPE_ORDER.find((scope) => SCAN_SCOPES[scope].includesRule(ruleId)) ?? null;
 }

@@ -116,13 +116,60 @@ describe("reconcile: first look at an area is a baseline", () => {
   });
 });
 
+describe("reconcile: verifying what the merchant says they fixed", () => {
+  const awaiting = (ruleId: string, pageUrl: string) =>
+    issue(ruleId, "homepage", pageUrl, "awaiting_verification");
+
+  it("verifies an issue the merchant marked done and the scan no longer finds", () => {
+    const known = [awaiting("home.trust", "https://s.com/")];
+    const r = reconcile(known, [], coverage(["home.trust"], ["/"]), new Set(["home.trust"]));
+
+    expect(r.resolved.map((i) => i.ruleId)).toEqual(["home.trust"]);
+    expect(r.resolvedCount).toBe(1);
+  });
+
+  it("reports a failed verification rather than counting it as a new issue", () => {
+    const known = [awaiting("home.trust", "https://s.com/")];
+    const r = reconcile(
+      known,
+      [loc("home.trust", "homepage", "https://s.com/")],
+      coverage(["home.trust"], ["/"]),
+      new Set(["home.trust"]),
+    );
+
+    expect(r.verificationFailed.map((e) => e.issue.ruleId)).toEqual(["home.trust"]);
+    expect(r.stillOpen).toEqual([]);
+    expect(r.newCount).toBe(0);
+  });
+
+  it("leaves a marked issue alone when the scan did not cover it", () => {
+    const known = [awaiting("home.trust", "https://s.com/")];
+    const r = reconcile(known, [], coverage(["img.alt"]), new Set(["home.trust"]));
+
+    expect(r.resolved).toEqual([]);
+    expect(r.verificationFailed).toEqual([]);
+  });
+});
+
 describe("explanation cache", () => {
   const hash = explanationContextHash({ promptVersion: "2", shopName: "Shop", brandVoice: "Friendly" });
-  const cached = [{ ruleId: "home.trust", contextHash: hash, explanation: "Why", recommendation: "Fix" }];
+  const cached = [
+    {
+      ruleId: "home.trust",
+      contextHash: hash,
+      explanation: "Why",
+      recommendation: "Add social proof",
+      steps: ["Collect reviews", "Show them near the buy button"],
+    },
+  ];
 
   it("reuses an explanation it has already generated", () => {
     const { hits, misses } = partitionByCache(["home.trust", "home.trust"], cached, hash);
-    expect(hits.get("home.trust")).toEqual({ explanation: "Why", recommendation: "Fix" });
+    expect(hits.get("home.trust")).toEqual({
+      explanation: "Why",
+      recommendation: "Add social proof",
+      steps: ["Collect reviews", "Show them near the buy button"],
+    });
     expect(misses).toEqual([]);
   });
 

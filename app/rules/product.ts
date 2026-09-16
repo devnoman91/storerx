@@ -3,7 +3,7 @@
  * The heaviest rule set - core to conversion
  */
 
-import type { Rule, RuleContext, Finding, ProductData } from "./types";
+import type { Rule, RuleContext, Finding } from "./types";
 
 // Helper to check if element exists above fold (first 800px on mobile)
 function isAboveFold(html: string, selector: string): boolean {
@@ -32,7 +32,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "high",
     description: "Reviews/rating visible above the fold",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const reviewPatterns = [
         "review",
@@ -54,7 +53,6 @@ export const productRules: Rule[] = [
           severity: "high",
           title: "Product pages lack reviews above the fold",
           evidence: { type: "text", value: "No reviews widget detected" },
-          fixableByAI: false,
         };
       }
 
@@ -66,7 +64,6 @@ export const productRules: Rule[] = [
           severity: "high",
           title: "Reviews are below the fold on mobile",
           evidence: { type: "text", value: "Reviews found but not visible immediately" },
-          fixableByAI: false,
         };
       }
 
@@ -79,7 +76,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "Sticky add-to-cart on mobile",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const stickyPatterns = [
         "position:\\s*sticky",
@@ -97,7 +93,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: "Mobile add-to-cart button is below the fold",
           evidence: { type: "text", value: "No sticky add-to-cart detected" },
-          fixableByAI: false,
         };
       }
 
@@ -110,7 +105,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "high",
     description: "Price, variants, stock, delivery info near CTA",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       // Check if price is present
       const pricePatterns = ["price", "\\$\\d+", "€\\d+", "£\\d+"];
@@ -121,7 +115,6 @@ export const productRules: Rule[] = [
           severity: "high",
           title: "Price not visible near add-to-cart button",
           evidence: { type: "text", value: "Price element not found near CTA" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -133,8 +126,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "Description is too short (< 80 words)",
-    fixableByAI: true,
-    fixType: "product_description",
     check: (ctx: RuleContext): Finding | null => {
       // Extract product description (look for common patterns)
       const descPatterns = [
@@ -162,8 +153,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: `Product description is too short (${wordCount} words)`,
           evidence: { type: "text", value: `Only ${wordCount} words, recommend 80+ for SEO and conversion` },
-          fixableByAI: true,
-          fixType: "product_description",
         };
       }
 
@@ -176,8 +165,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "low",
     description: "Description is too long (> 600 words) with no structure",
-    fixableByAI: true,
-    fixType: "product_description",
     check: (ctx: RuleContext): Finding | null => {
       const descPatterns = [
         /<div[^>]*class="[^"]*description[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
@@ -204,8 +191,6 @@ export const productRules: Rule[] = [
           severity: "low",
           title: "Product description is long without structure",
           evidence: { type: "text", value: `${wordCount} words with no headings or lists` },
-          fixableByAI: true,
-          fixType: "product_description",
         };
       }
 
@@ -218,8 +203,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "FAQ / size guide / shipping & returns section",
-    fixableByAI: true,
-    fixType: "faq_block",
     check: (ctx: RuleContext): Finding | null => {
       const faqPatterns = [
         "faq",
@@ -238,8 +221,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: "Product page lacks FAQ or size guide section",
           evidence: { type: "text", value: "No FAQ, size guide, or shipping info found" },
-          fixableByAI: true,
-          fixType: "faq_block",
         };
       }
 
@@ -252,8 +233,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "Trust badges near CTA",
-    fixableByAI: true,
-    fixType: "trust_badges",
     check: (ctx: RuleContext): Finding | null => {
       const trustPatterns = [
         "trust-badge",
@@ -273,8 +252,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: "No trust badges near add-to-cart button",
           evidence: { type: "text", value: "Trust badges help reduce purchase anxiety" },
-          fixableByAI: true,
-          fixType: "trust_badges",
         };
       }
 
@@ -287,8 +264,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "Cross-sells / related products / bundles",
-    fixableByAI: true,
-    fixType: "crosssells",
     check: (ctx: RuleContext): Finding | null => {
       const crosssellPatterns = [
         "related.*product",
@@ -309,8 +284,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: "No cross-sells or related products shown",
           evidence: { type: "text", value: "Cross-sells increase average order value" },
-          fixableByAI: true,
-          fixType: "crosssells",
         };
       }
 
@@ -323,7 +296,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "high",
     description: "Out-of-stock variants not marked",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       // Check if there are variant selectors without OOS indication
       const hasVariants = hasElement(ctx.html, ["variant", "option.*selector", "swatch"]);
@@ -346,7 +318,6 @@ export const productRules: Rule[] = [
             severity: "high",
             title: "Out-of-stock variants not clearly marked",
             evidence: { type: "text", value: "Customers may try to add unavailable items" },
-            fixableByAI: false,
           };
         }
       }
@@ -360,8 +331,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "SEO title missing or > 60 chars",
-    fixableByAI: true,
-    fixType: "seo_title",
     check: (ctx: RuleContext): Finding | null => {
       const titleMatch = ctx.html.match(/<title[^>]*>(.*?)<\/title>/i);
       const seoTitle = titleMatch ? titleMatch[1].trim() : "";
@@ -373,8 +342,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: "SEO title is missing",
           evidence: { type: "text", value: "No <title> tag found" },
-          fixableByAI: true,
-          fixType: "seo_title",
         };
       }
 
@@ -385,8 +352,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: `SEO title is too long (${seoTitle.length} chars)`,
           evidence: { type: "text", value: `"${seoTitle.substring(0, 50)}..." - truncated in search results` },
-          fixableByAI: true,
-          fixType: "seo_title",
         };
       }
 
@@ -399,8 +364,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "medium",
     description: "Meta description missing or > 160 chars",
-    fixableByAI: true,
-    fixType: "seo_meta",
     check: (ctx: RuleContext): Finding | null => {
       const metaMatch = ctx.html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
       const metaDesc = metaMatch ? metaMatch[1].trim() : "";
@@ -412,8 +375,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: "Meta description is missing",
           evidence: { type: "text", value: "No meta description found" },
-          fixableByAI: true,
-          fixType: "seo_meta",
         };
       }
 
@@ -424,8 +385,6 @@ export const productRules: Rule[] = [
           severity: "medium",
           title: `Meta description is too long (${metaDesc.length} chars)`,
           evidence: { type: "text", value: "Truncated in search results" },
-          fixableByAI: true,
-          fixType: "seo_meta",
         };
       }
 
@@ -438,7 +397,6 @@ export const productRules: Rule[] = [
     page: "product",
     severity: "low",
     description: "Product structured data (JSON-LD) missing",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const hasProductSchema =
         /application\/ld\+json[^>]*>[\s\S]*?"@type"\s*:\s*"Product"/i.test(ctx.html);
@@ -450,7 +408,6 @@ export const productRules: Rule[] = [
           severity: "low",
           title: "Product structured data (JSON-LD) is missing",
           evidence: { type: "text", value: "Rich snippets won't appear in search results" },
-          fixableByAI: false,
         };
       }
 

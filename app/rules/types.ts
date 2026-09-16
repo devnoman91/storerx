@@ -141,10 +141,12 @@ export interface Finding {
     type: "selector" | "text" | "screenshot";
     value: string;
   };
-  /** Can this be fixed automatically by AI? */
-  fixableByAI: boolean;
-  /** Fix type if fixable */
-  fixType?: FixType;
+  /**
+   * The resource this is edited on in Shopify admin, when the rule knows it —
+   * an image finding is edited on its product, not on the image itself.
+   * Where it is edited at all comes from app/remedies/catalog.ts.
+   */
+  adminRef?: string;
   /** Target resource ID if applicable (product ID, image ID, etc.) */
   targetId?: string;
   /**
@@ -158,18 +160,6 @@ export interface Finding {
   imageUrl?: string;
 }
 
-export type FixType =
-  | "product_description"
-  | "seo_title"
-  | "seo_meta"
-  | "alt_text"
-  | "faq_block"
-  | "trust_badges"
-  | "cta_copy"
-  | "crosssells"
-  | "shipping_bar"
-  | "image_compress";
-
 export interface Rule {
   /** Unique rule ID: page.topic.detail */
   id: string;
@@ -181,8 +171,4 @@ export interface Rule {
   description: string;
   /** Check function: returns a Finding if issue detected, null if passed */
   check: (ctx: RuleContext) => Finding | null;
-  /** Can this issue be fixed by AI? */
-  fixableByAI: boolean;
-  /** Fix type if fixable */
-  fixType?: FixType;
 }

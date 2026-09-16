@@ -47,7 +47,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "high",
     description: "Lighthouse performance score below Lighthouse's passing band",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh) return null;
@@ -65,7 +64,6 @@ export const perfRules: Rule[] = [
           type: "text",
           value: `Lighthouse scores 90+ as good, 50-89 as needs improvement, below 50 as poor.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -75,7 +73,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "high",
     description: "Largest Contentful Paint slower than 2.5s",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.lcp <= 0) return null;
@@ -93,7 +90,6 @@ export const perfRules: Rule[] = [
             `Good is under ${LCP_NEEDS_WORK_S}s. The largest element is usually the hero ` +
             `image — serve it at the size it displays at and avoid lazy-loading it.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -103,7 +99,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "high",
     description: "Cumulative Layout Shift above 0.1",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh) return null;
@@ -121,7 +116,6 @@ export const perfRules: Rule[] = [
             `Good is ${CLS_NEEDS_WORK} or less. Content jumping as it loads causes mis-taps ` +
             `on mobile. Usually images or embeds without reserved width/height.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -131,7 +125,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "high",
     description: "Total Blocking Time above 200ms",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.tbt <= 0) return null;
@@ -149,7 +142,6 @@ export const perfRules: Rule[] = [
             `Good is under ${TBT_NEEDS_WORK_MS}ms. While blocked the page cannot respond ` +
             `to taps. Deferring non-critical app scripts is the usual fix.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -159,7 +151,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "medium",
     description: "Interaction to Next Paint above 200ms (CrUX field data)",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       // undefined means CrUX has no data for this store, not that INP is fine.
@@ -178,7 +169,6 @@ export const perfRules: Rule[] = [
             `Measured from real Chrome traffic to this store. Good is under ` +
             `${INP_NEEDS_WORK_MS}ms. Heavy third-party JavaScript is the common cause.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -188,7 +178,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "high",
     description: "Total JavaScript transfer weight over budget",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.totalJsWeight <= 0) return null;
@@ -204,7 +193,6 @@ export const perfRules: Rule[] = [
           type: "text",
           value: `Budget is ${kb(JS_BUDGET)}. Most of this is usually apps rather than the theme.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -214,7 +202,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "medium",
     description: "Third-party app scripts add significant page weight",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.thirdPartyScripts.length === 0) return null;
@@ -239,7 +226,6 @@ export const perfRules: Rule[] = [
           type: "text",
           value: `Heaviest: ${top}. Uninstalling an unused app removes its script everywhere.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -249,7 +235,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "medium",
     description: "A third-party script blocks the main thread",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh) return null;
@@ -276,7 +261,6 @@ export const perfRules: Rule[] = [
                   .join(", ")
               : `Ask the app's support whether its script can load deferred or async.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -286,7 +270,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "medium",
     description: "Render-blocking resources delay first paint",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.renderBlockingCount === 0) return null;
@@ -302,7 +285,6 @@ export const perfRules: Rule[] = [
           type: "text",
           value: `Nothing displays until these finish loading. Usually CSS or synchronous scripts in the theme head.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -312,7 +294,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "low",
     description: "More than 3 font files requested",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.fontCount <= MAX_FONTS) return null;
@@ -326,7 +307,6 @@ export const perfRules: Rule[] = [
           type: "text",
           value: `${MAX_FONTS} or fewer is typical. Each weight and style is a separate download.`,
         },
-        fixableByAI: false,
       };
     },
   },
@@ -336,7 +316,6 @@ export const perfRules: Rule[] = [
     page: "perf",
     severity: "medium",
     description: "Total image transfer weight over budget",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.totalImageWeight <= 0) return null;
@@ -354,7 +333,6 @@ export const perfRules: Rule[] = [
             `compression — the fix is requesting smaller dimensions and lazy-loading ` +
             `images below the fold, not re-encoding files.`,
         },
-        fixableByAI: false,
       };
     },
   },

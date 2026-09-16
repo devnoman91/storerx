@@ -35,6 +35,9 @@ function base(product: CatalogProduct, image?: ImageData) {
     pageUrl: product.url,
     targetTitle: product.title,
     imageUrl: image?.url ?? product.images[0]?.url,
+    // Alt text and image files are edited on the product, not on a page of
+    // their own, so that is where the merchant is sent.
+    adminRef: product.id,
   };
 }
 
@@ -50,8 +53,6 @@ export function checkImage(product: CatalogProduct, image: ImageData): Finding[]
       severity: "medium",
       title: "Image missing alt text",
       evidence: { type: "text", value: `No alt text on an image of "${product.title}"` },
-      fixableByAI: true,
-      fixType: "alt_text",
       targetId: image.id,
     });
   }
@@ -66,8 +67,6 @@ export function checkImage(product: CatalogProduct, image: ImageData): Finding[]
         type: "text",
         value: `Original upload is ${formatBytes(image.fileSize)} (${formatType(image.mimeType)}, ${dims})`,
       },
-      fixableByAI: true,
-      fixType: "image_compress",
       targetId: image.id,
     });
   }
@@ -79,7 +78,6 @@ export function checkImage(product: CatalogProduct, image: ImageData): Finding[]
       severity: "low",
       title: `Image is ${dims} px`,
       evidence: { type: "text", value: `${dims} px, above the ${IMAGE_MAX_DIMENSION} px guideline` },
-      fixableByAI: false,
       targetId: image.id,
     });
   }
@@ -94,7 +92,6 @@ export function checkImage(product: CatalogProduct, image: ImageData): Finding[]
         type: "text",
         value: `${dims} px, below the ${IMAGE_MIN_DIMENSION} px needed to stay sharp when zoomed`,
       },
-      fixableByAI: false,
       targetId: image.id,
     });
   }
@@ -120,7 +117,6 @@ export function checkProductImages(product: CatalogProduct): Finding[] {
         type: "text",
         value: `${images.length} of the recommended ${MIN_IMAGES_PER_PRODUCT}+ images`,
       },
-      fixableByAI: false,
       targetId: product.id,
     });
   }
@@ -143,7 +139,6 @@ export function checkProductImages(product: CatalogProduct): Finding[] {
           type: "text",
           value: `Width ÷ height ranges from ${min.toFixed(2)} to ${max.toFixed(2)} across ${ratios.length} images`,
         },
-        fixableByAI: false,
         targetId: product.id,
       });
     }
@@ -193,7 +188,6 @@ export function checkDuplicateImages(products: CatalogProduct[]): Finding[] {
               ? `Same ${formatBytes(image.fileSize)}, ${image.width}×${image.height} file uploaded twice to this product`
               : `Same ${formatBytes(image.fileSize)}, ${image.width}×${image.height} file as an image on "${original.product.title}"`,
         },
-        fixableByAI: false,
         targetId: image.id,
       });
     }
@@ -228,7 +222,6 @@ export const imageRules: Rule[] = [
     page: "images",
     severity: "low",
     description: "Images not lazy-loaded / no srcset",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const hasLazyLoading = /loading=["']lazy["']|data-src/i.test(ctx.html);
       const hasSrcset = /srcset/i.test(ctx.html);
@@ -240,7 +233,6 @@ export const imageRules: Rule[] = [
           severity: "low",
           title: "Theme may not use lazy loading or responsive images",
           evidence: { type: "text", value: "No loading=\"lazy\" or srcset found in the page HTML" },
-          fixableByAI: false,
         };
       }
       return null;

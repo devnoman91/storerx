@@ -22,7 +22,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "high",
     description: "Hero headline + CTA visible above fold on mobile",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const heroPatterns = ["hero", "banner", "slideshow", "carousel"];
       const ctaPatterns = ["shop.*now", "buy.*now", "get.*started", "explore", "cta", "button.*primary"];
@@ -37,7 +36,6 @@ export const homepageRules: Rule[] = [
           severity: "high",
           title: "Hero section missing clear CTA above the fold",
           evidence: { type: "text", value: "Visitors need immediate direction to act" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -49,7 +47,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "medium",
     description: "Announcement bar / shipping promise present",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const announcementPatterns = [
         "announcement",
@@ -66,7 +63,6 @@ export const homepageRules: Rule[] = [
           severity: "medium",
           title: "No announcement bar or shipping promise",
           evidence: { type: "text", value: "Shipping info reduces cart abandonment" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -78,7 +74,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "medium",
     description: "Featured collections or products in first 2 screens",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const featuredPatterns = [
         "featured.*product",
@@ -98,7 +93,6 @@ export const homepageRules: Rule[] = [
           severity: "medium",
           title: "No featured products or collections visible early",
           evidence: { type: "text", value: "Showcase your best products immediately" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -110,7 +104,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "high",
     description: "Trust elements (reviews, badges, press, guarantees)",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const trustPatterns = [
         "testimonial",
@@ -132,7 +125,6 @@ export const homepageRules: Rule[] = [
           severity: "high",
           title: "Homepage lacks trust elements",
           evidence: { type: "text", value: "Reviews, badges, or social proof build credibility" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -144,7 +136,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "medium",
     description: "More than 1 popup on load",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const popupPatterns = [
         "popup",
@@ -170,7 +161,6 @@ export const homepageRules: Rule[] = [
           severity: "medium",
           title: "Multiple popups detected on homepage",
           evidence: { type: "text", value: "Too many popups hurt user experience" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -182,7 +172,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "low",
     description: "Main nav ≤ 7 items, has Search",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const hasSearch = hasElement(ctx.html, ["search", "icon.*search", "search.*icon"]);
 
@@ -193,7 +182,6 @@ export const homepageRules: Rule[] = [
           severity: "low",
           title: "Navigation missing search functionality",
           evidence: { type: "text", value: "Search helps visitors find products quickly" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -205,7 +193,6 @@ export const homepageRules: Rule[] = [
     page: "homepage",
     severity: "medium",
     description: "Contact / About / Policies links in footer",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const footerPatterns = ["contact", "about", "privacy", "terms", "policy", "refund", "return"];
 
@@ -222,7 +209,6 @@ export const homepageRules: Rule[] = [
           severity: "medium",
           title: "Footer missing essential links",
           evidence: { type: "text", value: "Contact, About, and Policies build trust" },
-          fixableByAI: false,
         };
       }
       return null;

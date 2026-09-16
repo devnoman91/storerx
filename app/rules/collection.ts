@@ -14,7 +14,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "medium",
     description: "Filter + sort available",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const filterPatterns = ["filter", "facet", "refine"];
       const sortPatterns = ["sort", "order.*by"];
@@ -32,7 +31,6 @@ export const collectionRules: Rule[] = [
             type: "text",
             value: `Missing: ${!hasFilter ? "filters" : ""}${!hasFilter && !hasSort ? " and " : ""}${!hasSort ? "sort" : ""}`,
           },
-          fixableByAI: false,
         };
       }
       return null;
@@ -44,7 +42,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "high",
     description: "Price visible on product cards",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const pricePatterns = ["price", "\\$\\d+", "€\\d+", "£\\d+"];
       const cardPatterns = ["product-card", "collection-product", "grid-item"];
@@ -59,7 +56,6 @@ export const collectionRules: Rule[] = [
           severity: "high",
           title: "Product cards missing visible prices",
           evidence: { type: "text", value: "Price visibility is essential for browsing" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -71,7 +67,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "low",
     description: "Quick add-to-cart on cards",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const quickAddPatterns = [
         "quick.*add",
@@ -88,7 +83,6 @@ export const collectionRules: Rule[] = [
           severity: "low",
           title: "No quick add-to-cart on product cards",
           evidence: { type: "text", value: "Quick add reduces clicks to purchase" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -100,7 +94,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "medium",
     description: "Collection has < 4 products",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       // Count product cards
       const cardMatches = ctx.html.match(/product-card|product-item|grid-item/gi) || [];
@@ -113,7 +106,6 @@ export const collectionRules: Rule[] = [
           severity: "medium",
           title: `Collection has only ${productCount} products`,
           evidence: { type: "text", value: "Thin collections feel incomplete to shoppers" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -125,7 +117,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "medium",
     description: "Card images have mixed aspect ratios",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       // This would need actual image analysis
       // For now, check if aspect-ratio CSS is enforced
@@ -142,7 +133,6 @@ export const collectionRules: Rule[] = [
           severity: "medium",
           title: "Product images may have inconsistent aspect ratios",
           evidence: { type: "text", value: "Consistent images look more professional" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -154,7 +144,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "low",
     description: "Collection has description (SEO)",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const descPatterns = [
         "collection-description",
@@ -169,7 +158,6 @@ export const collectionRules: Rule[] = [
           severity: "low",
           title: "Collection page lacks description text",
           evidence: { type: "text", value: "Descriptions help SEO and guide shoppers" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -181,7 +169,6 @@ export const collectionRules: Rule[] = [
     page: "collection",
     severity: "high",
     description: "Empty collections published",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const emptyPatterns = [
         "no.*products",
@@ -197,7 +184,6 @@ export const collectionRules: Rule[] = [
           severity: "high",
           title: "Empty collection is published",
           evidence: { type: "text", value: "Empty pages hurt SEO and frustrate visitors" },
-          fixableByAI: false,
         };
       }
       return null;

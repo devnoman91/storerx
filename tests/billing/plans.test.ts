@@ -42,7 +42,7 @@ describe("plans", () => {
     for (let i = 1; i < order.length; i++) {
       expect(order[i].price).toBeGreaterThan(order[i - 1].price);
       expect(size(order[i].limits.scans)).toBeGreaterThanOrEqual(size(order[i - 1].limits.scans));
-      expect(order[i].limits.aiExplanations).toBeGreaterThanOrEqual(order[i - 1].limits.aiExplanations);
+      expect(order[i].limits.aiCredits).toBeGreaterThanOrEqual(order[i - 1].limits.aiCredits);
     }
   });
 });
@@ -63,8 +63,8 @@ describe("usage periods", () => {
 
 describe("scan limits", () => {
   it("blocks another scan on Free once the month's scans are used", () => {
-    expect(scanAllowance(PLANS.free, { scans: PLANS.free.limits.scans!, aiExplanations: 0 }).allowed).toBe(false);
-    expect(scanAllowance(PLANS.free, { scans: 0, aiExplanations: 0 }).allowed).toBe(true);
+    expect(scanAllowance(PLANS.free, { scans: PLANS.free.limits.scans!, aiCredits: 0 }).allowed).toBe(false);
+    expect(scanAllowance(PLANS.free, { scans: 0, aiCredits: 0 }).allowed).toBe(true);
   });
 
   it("gives Free enough scans to cover every area once", () => {
@@ -72,7 +72,7 @@ describe("scan limits", () => {
   });
 
   it("never blocks unlimited plans", () => {
-    expect(scanAllowance(PLANS.growth, { scans: 500, aiExplanations: 0 })).toMatchObject({ allowed: true, remaining: Infinity });
+    expect(scanAllowance(PLANS.growth, { scans: 500, aiCredits: 0 })).toMatchObject({ allowed: true, remaining: Infinity });
   });
 
   it("does not report negative remaining allowance", () => {

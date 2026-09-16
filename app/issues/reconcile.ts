@@ -42,9 +42,16 @@ export function isCovered(issue: Located, coverage: Coverage): boolean {
   return true;
 }
 
+export type IssueStatus = "open" | "awaiting_verification" | "resolved";
+
 export interface KnownIssue extends Located {
   id: string;
-  status: "open" | "resolved";
+  status: IssueStatus;
+}
+
+/** Statuses that mean the problem is still on the store as far as scans know. */
+function isOutstanding(status: IssueStatus): boolean {
+  return status === "open" || status === "awaiting_verification";
 }
 
 export interface Reconciliation<I extends KnownIssue, F extends Located> {
@@ -53,6 +60,12 @@ export interface Reconciliation<I extends KnownIssue, F extends Located> {
   /** Was resolved, is back. Always new. */
   reopened: Array<{ issue: I; finding: F }>;
   stillOpen: Array<{ issue: I; finding: F }>;
+  /**
+   * The merchant marked it fixed, but this scan found it again. Not new — it
+   * never actually went away — but they need telling that the check failed.
+   */
+  verificationFailed: Array<{ issue: I; finding: F }>;
+  /** Confirmed gone by this scan. */
   resolved: I[];
   newCount: number;
   resolvedCount: number;
@@ -75,6 +88,7 @@ export function reconcile<I extends KnownIssue, F extends Located>(
   const opened: Reconciliation<I, F>["opened"] = [];
   const reopened: Reconciliation<I, F>["reopened"] = [];
   const stillOpen: Reconciliation<I, F>["stillOpen"] = [];
+  const verificationFailed: Reconciliation<I, F>["verificationFailed"] = [];
 
   for (const finding of current) {
     if (currentKeys.has(finding.fingerprint)) continue;
@@ -85,6 +99,8 @@ export function reconcile<I extends KnownIssue, F extends Located>(
       opened.push({ finding, isNew: previouslyEvaluatedRules.has(finding.ruleId) });
     } else if (issue.status === "resolved") {
       reopened.push({ issue, finding });
+    } else if (issue.status === "awaiting_verification") {
+      verificationFailed.push({ issue, finding });
     } else {
       stillOpen.push({ issue, finding });
     }
@@ -92,13 +108,16 @@ export function reconcile<I extends KnownIssue, F extends Located>(
 
   const resolved = known.filter(
     (issue) =>
-      issue.status === "open" && !currentKeys.has(issue.fingerprint) && isCovered(issue, coverage),
+      isOutstanding(issue.status) &&
+      !currentKeys.has(issue.fingerprint) &&
+      isCovered(issue, coverage),
   );
 
   return {
     opened,
     reopened,
     stillOpen,
+    verificationFailed,
     resolved,
     newCount: opened.filter((entry) => entry.isNew).length + reopened.length,
     resolvedCount: resolved.length,

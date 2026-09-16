@@ -22,7 +22,12 @@ import {
 import type { CatalogImages } from "../app/collectors/images";
 import { SCAN_SCOPES, type ScanScope, type StorefrontArea } from "../app/scans/scopes";
 import { calculateScore } from "../app/scoring";
-import { buildAuditPageList, closeBrowser, collectStorefrontPage } from "../app/collectors/storefront";
+import {
+  buildAuditPageList,
+  closeBrowser,
+  collectStorefrontPage,
+  type AuditPage,
+} from "../app/collectors/storefront";
 import { runLighthouseAudit, type LighthouseResult } from "../app/collectors/lighthouse";
 import { NonRetryableError } from "../app/errors";
 
@@ -73,13 +78,22 @@ const AREA_STEP: Record<StorefrontArea, string> = {
   homepage: "Scanning homepage",
   collection: "Scanning collections",
   product: "Scanning product pages",
+  cart: "Scanning cart",
 };
 
-const AREA_ORDER: StorefrontArea[] = ["homepage", "collection", "product"];
+const AREA_ORDER: StorefrontArea[] = ["homepage", "collection", "product", "cart"];
 
-/** Record which storefront URL a page's findings were detected on. */
-function atPage(findings: Finding[], pageUrl: string): Finding[] {
-  return findings.map((finding) => ({ ...finding, pageUrl }));
+/**
+ * Record where a page's findings were detected: the storefront URL for the
+ * merchant, and the admin GID of the product or collection behind it so the
+ * issue can offer a working "Edit in Shopify Admin" link.
+ */
+function atPage(findings: Finding[], pageUrl: string, resourceId?: string): Finding[] {
+  return findings.map((finding) => ({
+    ...finding,
+    pageUrl,
+    adminRef: finding.adminRef ?? resourceId,
+  }));
 }
 
 export async function processAuditJob(
@@ -124,20 +138,26 @@ export async function processAuditJob(
     // Storefront pages for the requested areas.
     const sampled = buildAuditPageList(shopDomain, shopData.collections, shopData.products);
     for (const area of areas) {
-      const urls =
-        area === "homepage" ? [homepageUrl] : sampled.filter((page) => page.type === area).map((page) => page.url);
+      const targets: AuditPage[] =
+        area === "homepage"
+          ? [{ type: "homepage", url: homepageUrl }]
+          : sampled.filter((page) => page.type === area);
 
-      for (let i = 0; i < urls.length; i++) {
-        progress(AREA_STEP[area], urls.length > 1 ? `${AREA_STEP[area]} ${i + 1}/${urls.length}` : undefined);
-        const page = await collectStorefrontPage(urls[i], area, collectorOptions);
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i];
+        progress(
+          AREA_STEP[area],
+          targets.length > 1 ? `${AREA_STEP[area]} ${i + 1}/${targets.length}` : undefined,
+        );
+        const page = await collectStorefrontPage(target.url, area, collectorOptions);
         const run = runRulesDetailed(area, { html: page.html, shopData }, include);
 
-        scannedUrls.push(urls[i]);
+        scannedUrls.push(target.url);
         run.evaluated.forEach((ruleId) => evaluated.add(ruleId));
-        const pageFindings = atPage(run.findings, urls[i]);
+        const pageFindings = atPage(run.findings, target.url, target.resourceId);
         findings.push(...pageFindings);
         pageResults.push({
-          url: urls[i],
+          url: target.url,
           pageType: area,
           croScore: calculateScore(run.findings),
           perfScore: null,

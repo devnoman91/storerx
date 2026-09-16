@@ -172,26 +172,45 @@ export async function collectAuditPages(
 /**
  * Build audit page list from shop data
  */
+export interface AuditPage {
+  type: StorefrontPage["pageType"];
+  url: string;
+  /**
+   * Admin GID of the product or collection behind the page. Carried through
+   * to findings so "Edit in Shopify Admin" can open the right resource —
+   * a storefront URL alone cannot be turned into an admin link.
+   */
+  resourceId?: string;
+}
+
 export function buildAuditPageList(
   domain: string,
-  collections: Array<{ handle: string }>,
-  products: Array<{ handle: string }>
-): Array<{ type: StorefrontPage["pageType"]; url: string }> {
+  collections: Array<{ handle: string; id?: string }>,
+  products: Array<{ handle: string; id?: string }>
+): AuditPage[] {
   const baseUrl = `https://${domain}`;
 
-  const pages: Array<{ type: StorefrontPage["pageType"]; url: string }> = [
+  const pages: AuditPage[] = [
     { type: "homepage", url: baseUrl },
     { type: "cart", url: `${baseUrl}/cart` },
   ];
 
   // Add top 3 collections
   for (const coll of collections.slice(0, 3)) {
-    pages.push({ type: "collection", url: `${baseUrl}/collections/${coll.handle}` });
+    pages.push({
+      type: "collection",
+      url: `${baseUrl}/collections/${coll.handle}`,
+      resourceId: coll.id,
+    });
   }
 
   // Add top 5 products
   for (const prod of products.slice(0, 5)) {
-    pages.push({ type: "product", url: `${baseUrl}/products/${prod.handle}` });
+    pages.push({
+      type: "product",
+      url: `${baseUrl}/products/${prod.handle}`,
+      resourceId: prod.id,
+    });
   }
 
   return pages;

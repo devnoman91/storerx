@@ -14,7 +14,6 @@ export const cartRules: Rule[] = [
     page: "cart",
     severity: "low",
     description: "Cart drawer (vs full page)",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const drawerPatterns = ["cart-drawer", "ajax-cart", "slide-cart", "mini-cart"];
 
@@ -25,7 +24,6 @@ export const cartRules: Rule[] = [
           severity: "low",
           title: "No cart drawer detected",
           evidence: { type: "text", value: "Cart drawers keep shoppers on the page" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -37,8 +35,6 @@ export const cartRules: Rule[] = [
     page: "cart",
     severity: "medium",
     description: "Free-shipping progress bar",
-    fixableByAI: true,
-    fixType: "shipping_bar",
     check: (ctx: RuleContext): Finding | null => {
       const shippingBarPatterns = [
         "shipping.*bar",
@@ -55,8 +51,6 @@ export const cartRules: Rule[] = [
           severity: "medium",
           title: "No free-shipping progress bar",
           evidence: { type: "text", value: "Progress bars increase average order value" },
-          fixableByAI: true,
-          fixType: "shipping_bar",
         };
       }
       return null;
@@ -68,8 +62,6 @@ export const cartRules: Rule[] = [
     page: "cart",
     severity: "medium",
     description: "Upsells / add-ons in cart",
-    fixableByAI: true,
-    fixType: "crosssells",
     check: (ctx: RuleContext): Finding | null => {
       const upsellPatterns = [
         "upsell",
@@ -88,8 +80,6 @@ export const cartRules: Rule[] = [
           severity: "medium",
           title: "No upsells or add-ons in cart",
           evidence: { type: "text", value: "Cart upsells boost average order value" },
-          fixableByAI: true,
-          fixType: "crosssells",
         };
       }
       return null;
@@ -101,8 +91,6 @@ export const cartRules: Rule[] = [
     page: "cart",
     severity: "medium",
     description: "Trust badges near checkout button",
-    fixableByAI: true,
-    fixType: "trust_badges",
     check: (ctx: RuleContext): Finding | null => {
       const trustPatterns = [
         "trust.*badge",
@@ -120,8 +108,6 @@ export const cartRules: Rule[] = [
           severity: "medium",
           title: "No trust badges near checkout button",
           evidence: { type: "text", value: "Trust badges reduce checkout anxiety" },
-          fixableByAI: true,
-          fixType: "trust_badges",
         };
       }
       return null;
@@ -133,7 +119,6 @@ export const cartRules: Rule[] = [
     page: "cart",
     severity: "low",
     description: "Discount field very prominent (encourages coupon hunting)",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       // Check if discount field is overly prominent
       const prominentPatterns = [
@@ -153,7 +138,6 @@ export const cartRules: Rule[] = [
           severity: "low",
           title: "Discount field may encourage coupon hunting",
           evidence: { type: "text", value: "Prominent promo fields can cause abandonment" },
-          fixableByAI: false,
         };
       }
       return null;
@@ -165,7 +149,6 @@ export const cartRules: Rule[] = [
     page: "cart",
     severity: "medium",
     description: "Express checkout buttons shown",
-    fixableByAI: false,
     check: (ctx: RuleContext): Finding | null => {
       const expressPatterns = [
         "shop.*pay",
@@ -184,7 +167,6 @@ export const cartRules: Rule[] = [
           severity: "medium",
           title: "No express checkout buttons in cart",
           evidence: { type: "text", value: "Express checkout reduces friction" },
-          fixableByAI: false,
         };
       }
       return null;

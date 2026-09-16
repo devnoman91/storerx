@@ -10,8 +10,12 @@
 import { createHash } from "node:crypto";
 
 export interface Explanation {
+  /** Why this costs the store sales. */
   explanation: string;
+  /** The single best recommended solution. */
   recommendation: string;
+  /** Ordered actions the merchant performs themselves. */
+  steps: string[];
 }
 
 export interface CachedExplanation extends Explanation {
@@ -41,7 +45,11 @@ export function partitionByCache(
   for (const ruleId of new Set(ruleIds)) {
     const entry = byRule.get(ruleId);
     if (entry && entry.contextHash === contextHash) {
-      hits.set(ruleId, { explanation: entry.explanation, recommendation: entry.recommendation });
+      hits.set(ruleId, {
+        explanation: entry.explanation,
+        recommendation: entry.recommendation,
+        steps: entry.steps,
+      });
     } else {
       misses.push(ruleId);
     }

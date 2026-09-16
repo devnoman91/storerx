@@ -13,7 +13,8 @@ import { calculateStoreHealth, collapseByRule, type ScorableIssue } from "../sco
 import prisma from "../db.server";
 import type { Explanation } from "./explanations";
 import { fingerprint, normalizePath } from "./identity";
-import { reconcile } from "./reconcile";
+import { reconcile, type IssueStatus } from "./reconcile";
+import { remedyForRule } from "../remedies/catalog";
 
 export interface ScanRecord {
   shopId: string;
@@ -82,7 +83,7 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
       }));
 
       const result = reconcile(
-        known.map((issue) => ({ ...issue, page: issue.pageType, status: issue.status as "open" | "resolved" })),
+        known.map((issue) => ({ ...issue, page: issue.pageType, status: issue.status as IssueStatus })),
         current,
         {
           evaluatedRules: new Set(scan.evaluatedRules),
@@ -91,23 +92,32 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
         previouslyEvaluated,
       );
 
-      const details = (finding: Finding) => ({
-        ruleId: finding.ruleId,
-        pageType: finding.page,
-        severity: finding.severity,
-        title: finding.title,
-        explanation: explanations.get(finding.ruleId)?.explanation ?? null,
-        recommendation: explanations.get(finding.ruleId)?.recommendation ?? null,
-        evidenceType: finding.evidence?.type ?? null,
-        evidenceValue: finding.evidence?.value ?? null,
-        pageUrl: finding.pageUrl ?? null,
-        targetId: finding.targetId ?? null,
-        targetTitle:
-          finding.targetTitle ?? (finding.targetId ? targetTitles.get(finding.targetId) ?? null : null),
-        imageUrl: finding.imageUrl ?? null,
-        fixableByAI: finding.fixableByAI,
-        fixType: finding.fixType ?? null,
-      });
+      const details = (finding: Finding) => {
+        const advice = explanations.get(finding.ruleId);
+        const remedy = remedyForRule(finding.ruleId);
+        return {
+          ruleId: finding.ruleId,
+          pageType: finding.page,
+          severity: finding.severity,
+          title: finding.title,
+          explanation: advice?.explanation ?? null,
+          recommendation: advice?.recommendation ?? null,
+          steps: advice?.steps ?? [],
+          evidenceType: finding.evidence?.type ?? null,
+          evidenceValue: finding.evidence?.value ?? null,
+          pageUrl: finding.pageUrl ?? null,
+          targetId: finding.targetId ?? null,
+          targetTitle:
+            finding.targetTitle ?? (finding.targetId ? targetTitles.get(finding.targetId) ?? null : null),
+          imageUrl: finding.imageUrl ?? null,
+          // Where the merchant acts. Settings and theme remedies name a fixed
+          // destination; resource remedies take the id the scan recorded.
+          remedy: remedy.kind,
+          adminArea: remedy.area ?? null,
+          adminRef: remedy.ref ?? finding.adminRef ?? finding.targetId ?? null,
+          suggestionKind: remedy.suggestion ?? null,
+        };
+      };
 
       if (result.opened.length > 0) {
         await tx.issue.createMany({
@@ -136,6 +146,8 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
             openedAsNew: true,
             resolvedAt: null,
             resolvedAuditId: null,
+            markedResolvedAt: null,
+            verificationFailedAt: null,
           },
         });
       }
@@ -145,10 +157,31 @@ export async function recordScan(scan: ScanRecord): Promise<ScanOutcome> {
           data: { ...details(finding.finding), lastSeenAt: completedAt, lastSeenAuditId: auditId },
         });
       }
+      // Marked fixed, but this scan found it again. Back to open, and stamped
+      // so the merchant is told the check did not pass rather than silently
+      // losing the state they set.
+      for (const { issue, finding } of result.verificationFailed) {
+        await tx.issue.update({
+          where: { id: issue.id },
+          data: {
+            ...details(finding.finding),
+            status: "open",
+            lastSeenAt: completedAt,
+            lastSeenAuditId: auditId,
+            markedResolvedAt: null,
+            verificationFailedAt: completedAt,
+          },
+        });
+      }
       if (result.resolved.length > 0) {
         await tx.issue.updateMany({
           where: { id: { in: result.resolved.map((issue) => issue.id) } },
-          data: { status: "resolved", resolvedAt: completedAt, resolvedAuditId: auditId },
+          data: {
+            status: "resolved",
+            resolvedAt: completedAt,
+            resolvedAuditId: auditId,
+            verificationFailedAt: null,
+          },
         });
       }
 
@@ -294,8 +327,11 @@ async function seedFromLatestAudit(tx: Tx, shopId: string, currentAuditId: strin
       targetId: row.targetId,
       targetTitle: row.targetTitle,
       imageUrl: row.imageUrl,
-      fixableByAI: row.fixableByAI,
-      fixType: row.fixType,
+      remedy: row.remedy,
+      adminArea: row.adminArea,
+      adminRef: row.adminRef,
+      suggestionKind: row.suggestionKind,
+      steps: row.steps,
       status: "open",
       firstSeenAt: row.firstSeenAt ?? seenAt,
       lastSeenAt: seenAt,

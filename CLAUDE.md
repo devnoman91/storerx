@@ -1,15 +1,15 @@
 @AGENTS.md
 
 # StoreRx — Claude Code Project Guide
-AI Conversion Doctor for Shopify. Audits a store page-by-page (CRO + performance + SEO + images), scores it, prescribes fixes, and applies them with merchant approval.
+AI Conversion Doctor for Shopify. Audits a store area by area (CRO + performance + SEO + images), scores it, explains what it finds and recommends how to solve it. The merchant makes every change — StoreRx never writes to the store.
 
 **Full spec:** `docs/FEATURES.md` — read it before building any feature.
 **Design/wireframes:** `docs/DESIGN.md` — read it before building any UI screen.
 
 ## Non-negotiable rules
 
-1. **Code finds problems, AI explains/fixes.** Every detectable issue is a deterministic rule in `app/rules/<page>.ts`. Never ask the LLM "does this page have reviews?".
-2. **AI never writes to the store without approval.** All fixes go through `Fix` (preview → approve → apply → undo). Keep the `before` snapshot.
+1. **Code finds problems, AI explains and advises.** Every detectable issue is a deterministic rule in `app/rules/<page>.ts`. Never ask the LLM "does this page have reviews?".
+2. **AI never writes to the store, full stop.** StoreRx detects, explains and recommends; the merchant makes every change. Where a rule's problem is solved is declared in `app/remedies/catalog.ts` (`admin` / `settings` / `theme` / `messaging`) and the UI turns that into a contextual action. Copy StoreRx drafts (`Suggestion`) is shown for review and copying — never applied. Never add an apply/undo path, and never label anything "Fix with AI".
 3. **No invented numbers.** Impact = High/Medium/Low. Never show "+X% conversion".
 4. **All LLM calls use Structured Outputs** via the single wrapper `app/ai/generate.ts`. No free-text parsing. No direct `openai` imports elsewhere.
 5. **No LLM/Lighthouse/Playwright inside request handlers.** Everything heavy runs in the worker (`worker/`). The job queue is the `Audit` table itself — workers claim `pending` rows with `FOR UPDATE SKIP LOCKED`. No external broker.
@@ -26,13 +26,16 @@ Shopify Remix app template · TypeScript · Polaris · Prisma/PostgreSQL (also t
 app/
   routes/            Remix routes (embedded admin UI)
   rules/             one file per page type: homepage.ts collection.ts product.ts cart.ts checkout.ts images.ts perf.ts
-  rules/types.ts     Rule = { id, page, severity, check(ctx) => Finding | null, fixableByAI }
+  rules/types.ts     Rule = { id, page, severity, check(ctx) => Finding | null }
+  remedies/          where each rule's problem is solved + the actions offered
+  suggestions/       drafted copy queue (per item, on request)
+  issues/            issue identity, reconciliation across scans, persistence
   scoring/           score calculation + weights
   ai/generate.ts     generate(prompt, schema, opts) — the only OpenAI entry point
   ai/prompts/        one file per task (explain, description, faq, seo, alt, crosssell, imageQuality)
   collectors/        admin.ts (GraphQL), storefront.ts (Playwright), lighthouse.ts
-  fixes/             apply/undo per fix type
-worker/              poll-loop processors: audit, imageScan, fix
+components/        issue cards, recommendation panels, drafted-copy panel
+worker/              poll-loop processors: audit, suggestions
 extensions/storerx-theme/   app blocks: faq, trust-badges, crosssells, shipping-bar
 prisma/schema.prisma
 docs/FEATURES.md
@@ -46,6 +49,8 @@ docs/FEATURES.md
 - Prompts include store context + brand voice metafield; outputs validated with zod before use.
 - Log OpenAI token usage per shop (`AiUsage` table).
 - Audit samples pages (home, 3 collections, 5 top products, cart) — never full crawl in the audit job.
+- Every rule ID must have an entry in `app/remedies/catalog.ts`; `tests/remedies` fails otherwise.
+- Issue lifecycle: `open` → `awaiting_verification` (merchant says they did it) → `resolved` (a scan confirmed it). Only a scan may resolve an issue.
 - Use `shopify-plugin:shopify-admin` skill for Admin GraphQL, `shopify-plugin:shopify-polaris-app-home` for UI, `shopify-plugin:shopify-liquid` for extension blocks. Validate GraphQL with `validate_graphql_codeblocks` before committing.
 
 ## Commands
