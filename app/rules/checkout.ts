@@ -1,7 +1,11 @@
 /**
  * Checkout settings rules
- * Note: Checkout page layout is controlled by Shopify
- * These rules check Admin API settings, not HTML
+ *
+ * Checkout layout is controlled by Shopify, so these rules read settings from
+ * the Admin API rather than page HTML. Only settings the API actually reports
+ * are checked: shipping rates, payment gateways and tipping are not exposed
+ * (or need extra scopes), and rules that ran on placeholder values for them
+ * were retired — see CheckoutSettings in ./types.
  */
 
 import type { Rule, RuleContext, Finding } from "./types";
@@ -11,29 +15,29 @@ export const checkoutRules: Rule[] = [
     id: "chk.express",
     page: "checkout",
     severity: "high",
-    description: "Shop Pay / Apple Pay / Google Pay enabled",
+    description: "Payment setup supports Shop Pay, Apple Pay or Google Pay",
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
 
-      const expressEnabled =
-        settings.shopPayEnabled ||
-        settings.applePayEnabled ||
-        settings.googlePayEnabled;
+      const anyWallet =
+        settings.shopPaySupported || settings.applePaySupported || settings.googlePaySupported;
+      if (anyWallet) return null;
 
-      if (!expressEnabled) {
-        return {
-          ruleId: "chk.express",
-          page: "checkout",
-          severity: "high",
-          title: "No express checkout methods enabled",
-          evidence: {
-            type: "text",
-            value: "Enable Shop Pay, Apple Pay, or Google Pay to reduce friction",
-          },
-        };
-      }
-      return null;
+      // Shopify reports which wallets the payment setup *supports*, not which
+      // are switched on — so this can only say none are available, never
+      // that one is turned off.
+      return {
+        ruleId: "chk.express",
+        page: "checkout",
+        severity: "high",
+        title: "Your payment setup doesn't support express wallets",
+        evidence: {
+          type: "text",
+          value:
+            "Shopify reports no support for Shop Pay, Apple Pay or Google Pay on this store's payment setup",
+        },
+      };
     },
   },
 
@@ -41,101 +45,21 @@ export const checkoutRules: Rule[] = [
     id: "chk.guest",
     page: "checkout",
     severity: "high",
-    description: "Guest checkout allowed",
+    description: "Customers can check out without logging in",
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
-      if (!settings) return null;
+      if (!settings || settings.guestCheckoutEnabled) return null;
 
-      if (!settings.guestCheckoutEnabled) {
-        return {
-          ruleId: "chk.guest",
-          page: "checkout",
-          severity: "high",
-          title: "Guest checkout is disabled",
-          evidence: {
-            type: "text",
-            value: "Forcing account creation causes abandonment",
-          },
-        };
-      }
-      return null;
-    },
-  },
-
-  {
-    id: "chk.shipping.options",
-    page: "checkout",
-    severity: "low",
-    description: "At least 2 shipping options",
-    check: (ctx: RuleContext): Finding | null => {
-      const settings = ctx.shopData?.checkoutSettings;
-      if (!settings) return null;
-
-      if (settings.shippingOptionsCount < 2) {
-        return {
-          ruleId: "chk.shipping.options",
-          page: "checkout",
-          severity: "low",
-          title: "Only one shipping option available",
-          evidence: {
-            type: "text",
-            value: "Offer standard and express shipping options",
-          },
-        };
-      }
-      return null;
-    },
-  },
-
-  {
-    id: "chk.payment.options",
-    page: "checkout",
-    severity: "medium",
-    description: "At least 2 payment methods",
-    check: (ctx: RuleContext): Finding | null => {
-      const settings = ctx.shopData?.checkoutSettings;
-      if (!settings) return null;
-
-      if (settings.paymentMethodsCount < 2) {
-        return {
-          ruleId: "chk.payment.options",
-          page: "checkout",
-          severity: "medium",
-          title: "Limited payment options",
-          evidence: {
-            type: "text",
-            value: "More payment options reduce checkout friction",
-          },
-        };
-      }
-      return null;
-    },
-  },
-
-  {
-    id: "chk.tipping",
-    page: "checkout",
-    severity: "low",
-    description: "Tipping enabled on non-service store",
-    check: (ctx: RuleContext): Finding | null => {
-      const settings = ctx.shopData?.checkoutSettings;
-      if (!settings) return null;
-
-      // Only flag if tipping is enabled - merchant may have valid reason
-      // This is informational, not necessarily a problem
-      if (settings.tippingEnabled) {
-        return {
-          ruleId: "chk.tipping",
-          page: "checkout",
-          severity: "low",
-          title: "Tipping is enabled at checkout",
-          evidence: {
-            type: "text",
-            value: "Tipping may confuse customers on product-only stores",
-          },
-        };
-      }
-      return null;
+      return {
+        ruleId: "chk.guest",
+        page: "checkout",
+        severity: "high",
+        title: "Customers must log in before they can check out",
+        evidence: {
+          type: "text",
+          value: "Customer accounts are set to require login at checkout",
+        },
+      };
     },
   },
 ];

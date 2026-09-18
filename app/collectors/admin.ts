@@ -96,9 +96,11 @@ const SHOP_QUERY = `
     shop {
       name
       myshopifyDomain
-      checkoutApiSupported
       paymentSettings {
         supportedDigitalWallets
+      }
+      customerAccountsV2 {
+        loginRequiredAtCheckout
       }
     }
   }
@@ -167,15 +169,13 @@ export async function collectAdminData(admin: AdminApiClient): Promise<ShopData>
   const shop = shopData.data?.shop;
   const wallets = shop?.paymentSettings?.supportedDigitalWallets || [];
 
+  // Every value here comes from the API. A setting Shopify does not report is
+  // left out, not filled with a guess a rule could then act on.
   const checkoutSettings: CheckoutSettings = {
-    guestCheckoutEnabled: true,
-    expressCheckoutEnabled: wallets.length > 0,
-    shopPayEnabled: wallets.includes("SHOPIFY_PAY"),
-    applePayEnabled: wallets.includes("APPLE_PAY"),
-    googlePayEnabled: wallets.includes("GOOGLE_PAY"),
-    shippingOptionsCount: 1,
-    paymentMethodsCount: 1 + wallets.length,
-    tippingEnabled: false,
+    guestCheckoutEnabled: shop?.customerAccountsV2?.loginRequiredAtCheckout !== true,
+    shopPaySupported: wallets.includes("SHOPIFY_PAY"),
+    applePaySupported: wallets.includes("APPLE_PAY"),
+    googlePaySupported: wallets.includes("GOOGLE_PAY"),
   };
 
   return {

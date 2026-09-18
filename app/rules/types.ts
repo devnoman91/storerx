@@ -116,15 +116,25 @@ export interface VariantData {
   price: string;
 }
 
+/**
+ * Checkout settings, limited to what the Admin API actually reports.
+ *
+ * Shipping rates need an extra scope, and payment gateways and tipping are not
+ * exposed at all. Rules for those used to run against hardcoded placeholder
+ * values — one fired for every store, two could never fire — so they were
+ * retired rather than kept on guesses.
+ */
 export interface CheckoutSettings {
+  /** Customers can check out without logging in (`customerAccountsV2`). */
   guestCheckoutEnabled: boolean;
-  expressCheckoutEnabled: boolean;
-  shopPayEnabled: boolean;
-  applePayEnabled: boolean;
-  googlePayEnabled: boolean;
-  shippingOptionsCount: number;
-  paymentMethodsCount: number;
-  tippingEnabled: boolean;
+  /**
+   * Wallets the shop's payment setup *supports* (`supportedDigitalWallets`).
+   * Shopify does not report whether each is switched on, so rules must not
+   * claim a wallet is enabled or disabled.
+   */
+  shopPaySupported: boolean;
+  applePaySupported: boolean;
+  googlePaySupported: boolean;
 }
 
 export interface Finding {

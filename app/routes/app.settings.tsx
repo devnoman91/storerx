@@ -26,8 +26,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return {
     brandVoice: shop.brandVoice || "",
-    auditSchedule: shop.auditSchedule,
-    emailSummary: shop.emailSummary,
     planLabel: planOf(shop.plan).label,
     passwordProtected,
     // Whether one is saved — the password itself never leaves the server.
@@ -43,10 +41,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Blank means "keep the saved one": the field is never pre-filled.
   const storefrontPassword = ((formData.get("storefrontPassword") as string) || "").trim();
 
+  // Scheduled scans and email summaries used to be offered here, but nothing
+  // ran the schedule or sent the email. They are gone until they are real.
   const settings = {
     brandVoice: (formData.get("brandVoice") as string) || null,
-    auditSchedule: (formData.get("auditSchedule") as string) || "weekly",
-    emailSummary: formData.get("emailSummary") === "on",
     ...(storefrontPassword ? { storefrontPassword } : {}),
   };
 
@@ -59,12 +57,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   return { success: true };
 };
-
-const SCHEDULES: Array<[string, string]> = [
-  ["manual", "Only when I ask"],
-  ["weekly", "Weekly"],
-  ["monthly", "Monthly"],
-];
 
 /** What the storefront password field should say, which depends on two things. */
 function passwordHelp(protectedStore: boolean, saved: boolean): string {
@@ -134,35 +126,6 @@ export default function Settings() {
             autocomplete="off"
             disabled={!data.passwordProtected}
           />
-        </s-section>
-
-        <s-section heading="Scanning">
-          <s-stack direction="block" gap="base">
-            {/* s-select takes its initial value from the selected option,
-                not a defaultValue prop. */}
-            <s-select
-              name="auditSchedule"
-              label="Automatic scans"
-              details="Scheduled scans count towards your plan just like ones you start yourself."
-            >
-              {SCHEDULES.map(([value, label]) => (
-                <s-option
-                  key={value}
-                  value={value}
-                  defaultSelected={data.auditSchedule === value}
-                >
-                  {label}
-                </s-option>
-              ))}
-            </s-select>
-
-            <s-checkbox
-              name="emailSummary"
-              label="Email me when a scan finishes"
-              details="A summary of what changed — new issues, and ones StoreRx verified."
-              defaultChecked={data.emailSummary}
-            />
-          </s-stack>
         </s-section>
 
         <s-section>

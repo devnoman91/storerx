@@ -132,7 +132,7 @@ export const SCAN_SCOPES: Record<ScanScope, ScopeSpec> = {
   },
   checkout: {
     label: "Checkout",
-    description: "Express payments, guest checkout, shipping and payment options",
+    description: "Express wallets and guest checkout",
     pages: [],
     catalogImages: false,
     performance: false,

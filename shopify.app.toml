@@ -6,7 +6,11 @@ application_url = "https://storerx.fly.dev"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,write_products,read_content,write_content,read_themes"
+# Read-only. StoreRx recommends changes and the merchant makes them, so it
+# never needs write access — asking for it on the install screen would
+# contradict the promise. Every query's scope need was checked with the Admin
+# API validator; read_products covers all of them.
+scopes = "read_products,read_content,read_themes"
 
 [webhooks]
 api_version = "2026-10"

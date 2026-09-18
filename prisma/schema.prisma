@@ -52,10 +52,12 @@ model Shop {
   // an admin credential — and never sent back to the browser.
   storefrontPassword String?
 
-  // Audit settings
-  auditSchedule String  @default("weekly") // weekly, monthly, manual
+  // Unused: settings the UI once offered with nothing behind them — no
+  // scheduler ran, no email was sent, no path was ever excluded. Kept rather
+  // than dropped so an older deployment reading the table does not break.
+  auditSchedule String  @default("weekly")
   emailSummary  Boolean @default(true)
-  excludedPaths String? // JSON array of paths to skip
+  excludedPaths String?
 
   // Plan and billing (app/billing/plans.ts). Limits come from the plan table;
   // usage is counted from Audit and AiUsage rows since the period start.

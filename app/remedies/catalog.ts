@@ -70,9 +70,6 @@ export const RULE_REMEDIES: Record<string, RuleRemedy> = {
   // Checkout — Shopify settings, not layout.
   "chk.express": settings("payments"),
   "chk.guest": settings("checkout"),
-  "chk.shipping.options": settings("shipping"),
-  "chk.payment.options": settings("payments"),
-  "chk.tipping": settings("checkout"),
 
   // Images — the catalog lives in admin; only lazy-loading is the theme's job.
   "img.alt": { kind: "admin", area: "product", suggestion: "alt_text" },
