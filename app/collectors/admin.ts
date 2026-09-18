@@ -129,7 +129,8 @@ export async function collectAdminData(admin: AdminApiClient): Promise<ShopData>
         title: node.title,
         handle: node.handle,
         descriptionHtml: node.descriptionHtml || "",
-        descriptionWordCount: descText.trim().split(/\s+/).length,
+        // `"".split(/\s+/)` is `[""]`, so an empty description counted as one word.
+        descriptionWordCount: descText.split(/\s+/).filter(Boolean).length,
         images: (node.images?.edges || []).map((imgEdge: any) => ({
           id: imgEdge.node.id,
           url: imgEdge.node.url,

@@ -10,22 +10,29 @@ Source of truth: `docs/FEATURES.md` sections 3–8. Read the relevant section be
 ## Adding a rule
 
 1. Pick the page file `app/rules/<page>.ts` and an ID `page.topic.detail`.
-2. Implement:
+2. Implement it against the parsed page, never the raw HTML:
    ```ts
-   export const rule: Rule = {
+   {
      id: 'prod.reviews.fold',
      page: 'product',
      severity: 'high',
-     title: 'No reviews above the fold',
-     check(ctx) {
-       // ctx.html (cheerio), ctx.mobileScreenshot, ctx.admin (typed data), ctx.lighthouse
-       const found = ctx.aboveFold('[class*="review"], [data-reviews], .jdgm-widget');
-       return found ? null : { evidence: 'No review widget in first 800px (mobile)' };
+     description: 'Reviews or a rating shown near the buy button',
+     check: (ctx) => {
+       const page = pageFor(ctx.html);          // parsed once, scripts/styles stripped
+       const buyArea = page.buyArea;            // section holding the add-to-cart form
+       if (!buyArea) return UNCHECKED;          // nothing to judge — NOT a pass
+       if (page.has('[class*="jdgm"]', buyArea)) return null;   // checked, passed
+       return { ruleId: 'prod.reviews.fold', page: 'product', severity: 'high',
+                title: "Reviews aren't shown near the buy button",
+                evidence: { type: 'text', value: 'What was actually seen' } };
      },
-   };
+   }
    ```
-3. Register in `app/rules/index.ts`.
-4. Add fixture `tests/fixtures/<page>/<case>.html` and a vitest case for pass + fail.
+   - `null` = checked and passed. `UNCHECKED` = could not check. Mixing them up resolves issues nobody looked at.
+   - No "above the fold" / "on mobile" claims — static HTML has no layout.
+   - Rules about the product itself read its Admin data via `ctx.resourceId`.
+3. Register in `app/rules/index.ts`, and add its remedy to `app/remedies/catalog.ts`.
+4. Test against `tests/fixtures/dawn/` — a passing Dawn page, a failing one built with `without()`, and the `UNCHECKED` case.
 5. Add the row to the table in `docs/FEATURES.md` §4/§5/§6.
 6. Deterministic only. If the check needs judgement (layout clutter, image quality), it belongs in `ai/prompts/` with a JSON schema and is flagged `source: 'ai'` and severity ≤ medium.
 

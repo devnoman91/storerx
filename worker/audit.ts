@@ -150,7 +150,11 @@ export async function processAuditJob(
           targets.length > 1 ? `${AREA_STEP[area]} ${i + 1}/${targets.length}` : undefined,
         );
         const page = await collectStorefrontPage(target.url, area, collectorOptions);
-        const run = runRulesDetailed(area, { html: page.html, shopData }, include);
+        const run = runRulesDetailed(
+          area,
+          { html: page.html, shopData, resourceId: target.resourceId },
+          include,
+        );
 
         scannedUrls.push(target.url);
         run.evaluated.forEach((ruleId) => evaluated.add(ruleId));

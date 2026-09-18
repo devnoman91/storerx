@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { checkoutRules } from "../../app/rules/checkout";
 import type { CheckoutSettings, RuleContext, ShopData } from "../../app/rules/types";
+import { checked } from "./helpers";
 
 function ctx(overrides: Partial<CheckoutSettings> = {}): RuleContext {
   const checkoutSettings: CheckoutSettings = {
@@ -27,15 +28,19 @@ describe("chk.express", () => {
   });
 
   it("fires when no express wallet is supported", () => {
-    const finding = rule("chk.express").check(
-      ctx({ shopPaySupported: false, applePaySupported: false, googlePaySupported: false }),
+    const finding = checked(
+      rule("chk.express").check(
+        ctx({ shopPaySupported: false, applePaySupported: false, googlePaySupported: false }),
+      ),
     );
     expect(finding?.ruleId).toBe("chk.express");
   });
 
   it("never claims a wallet is switched off — Shopify only reports support", () => {
-    const finding = rule("chk.express").check(
-      ctx({ shopPaySupported: false, applePaySupported: false, googlePaySupported: false }),
+    const finding = checked(
+      rule("chk.express").check(
+        ctx({ shopPaySupported: false, applePaySupported: false, googlePaySupported: false }),
+      ),
     );
     const words = `${finding?.title} ${finding?.evidence?.value}`.toLowerCase();
     expect(words).not.toMatch(/\b(enabled|disabled|turned off|switched off)\b/);
@@ -48,7 +53,9 @@ describe("chk.guest", () => {
   });
 
   it("fires when login is required at checkout", () => {
-    expect(rule("chk.guest").check(ctx({ guestCheckoutEnabled: false }))?.ruleId).toBe("chk.guest");
+    expect(checked(rule("chk.guest").check(ctx({ guestCheckoutEnabled: false })))?.ruleId).toBe(
+      "chk.guest",
+    );
   });
 });
 

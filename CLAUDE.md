@@ -44,7 +44,9 @@ docs/FEATURES.md
 ## Conventions
 
 - Rule IDs: `page.topic.detail` (e.g. `prod.reviews.fold`). Severity weights high=10 medium=5 low=2.
-- Each rule has a unit test with an HTML fixture in `tests/fixtures/<page>/`.
+- Page rules read the parsed page through `pageFor(ctx.html)` (`app/rules/page.ts`) — never regex over raw HTML, which matches words in scripts, CSS and meta tags. Static HTML has no layout, so no rule may claim "above the fold" or "on mobile"; use structure ("in the section with the add-to-cart form").
+- A rule returns `null` only when it checked and passed. When the page lacks what it needs (an empty cart, an unknown product) it returns `UNCHECKED` — otherwise the scan would count it as checked and resolve open issues it never looked at.
+- Each rule is tested against the real Dawn pages in `tests/fixtures/dawn/`; build failing cases with `without()` from `tests/rules/helpers.ts`.
 - Findings carry `evidence` (selector, text snippet, or screenshot crop path) — the UI shows it.
 - Prompts include store context + brand voice metafield; outputs validated with zod before use.
 - Log OpenAI token usage per shop (`AiUsage` table).

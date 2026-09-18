@@ -3,7 +3,7 @@
  * Aggregates all rules and provides execution functions
  */
 
-import type { Rule, RuleContext, Finding, PageType } from "./types";
+import { UNCHECKED, type Rule, type RuleContext, type Finding, type PageType } from "./types";
 import { homepageRules } from "./homepage";
 import { collectionRules } from "./collection";
 import { productRules } from "./product";
@@ -40,10 +40,8 @@ export function runRules(page: PageType, ctx: RuleContext): Finding[] {
 
   for (const rule of rules) {
     try {
-      const finding = rule.check(ctx);
-      if (finding) {
-        findings.push(finding);
-      }
+      const result = rule.check(ctx);
+      if (result && result !== UNCHECKED) findings.push(result);
     } catch (error) {
       console.error(`Rule ${rule.id} failed:`, error);
     }
@@ -55,8 +53,9 @@ export function runRules(page: PageType, ctx: RuleContext): Finding[] {
 export interface RuleRun {
   findings: Finding[];
   /**
-   * Rules that ran to completion. A rule that threw did not actually check
-   * the page, so it must not count as having re-checked an open issue.
+   * Rules that actually checked the page. A rule that threw, or that found
+   * nothing to check, must not count as having re-checked an open issue —
+   * otherwise an empty cart would "verify" that trust badges were added.
    */
   evaluated: string[];
 }
@@ -73,9 +72,10 @@ export function runRulesDetailed(
   for (const rule of getRulesForPage(page)) {
     if (!include(rule.id)) continue;
     try {
-      const finding = rule.check(ctx);
+      const result = rule.check(ctx);
+      if (result === UNCHECKED) continue;
       evaluated.push(rule.id);
-      if (finding) findings.push(finding);
+      if (result) findings.push(result);
     } catch (error) {
       console.error(`Rule ${rule.id} failed:`, error);
     }
@@ -99,6 +99,7 @@ export interface RuleSummary {
 export function runRulesWithSummary(page: PageType, ctx: RuleContext): RuleSummary {
   const rules = getRulesForPage(page);
   const findings = runRules(page, ctx);
+  const checked = runRulesDetailed(page, ctx).evaluated.length;
 
   return {
     page,
@@ -107,7 +108,7 @@ export function runRulesWithSummary(page: PageType, ctx: RuleContext): RuleSumma
     mediumCount: findings.filter((f) => f.severity === "medium").length,
     lowCount: findings.filter((f) => f.severity === "low").length,
     totalIssues: findings.length,
-    passedRules: rules.length - findings.length,
+    passedRules: checked - findings.length,
     totalRules: rules.length,
   };
 }

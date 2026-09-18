@@ -15,9 +15,27 @@ export const SEVERITY_WEIGHTS: Record<Severity, number> = {
   low: 2,
 };
 
+/**
+ * What a rule returns when it could not look at what it checks — an empty
+ * cart has no checkout button to put trust badges beside. Distinct from
+ * `null`, which means "checked, and it passed": a passing check resolves an
+ * open issue and counts towards a category's coverage, and an unchecked one
+ * must do neither.
+ */
+export const UNCHECKED = Symbol.for("storerx.rule.unchecked");
+export type Unchecked = typeof UNCHECKED;
+
+export type RuleResult = Finding | null | Unchecked;
+
 export interface RuleContext {
   /** Raw HTML of the page */
   html: string;
+  /**
+   * Admin GID of the product or collection this page shows, when the scan
+   * knows it. Lets product rules read that product's own data rather than
+   * guessing which one the page is about.
+   */
+  resourceId?: string;
   /** Parsed DOM (if needed) */
   document?: Document;
   /** Mobile screenshot path */
@@ -179,6 +197,9 @@ export interface Rule {
   severity: Severity;
   /** Short description of what the rule checks */
   description: string;
-  /** Check function: returns a Finding if issue detected, null if passed */
-  check: (ctx: RuleContext) => Finding | null;
+  /**
+   * Returns a Finding when the problem is present, null when the check
+   * passed, and UNCHECKED when the page did not contain what the check needs.
+   */
+  check: (ctx: RuleContext) => RuleResult;
 }
