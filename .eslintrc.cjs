@@ -74,6 +74,16 @@ module.exports = {
         "plugin:import/recommended",
         "plugin:import/typescript",
       ],
+      rules: {
+        // A loader once read a `const` declared further down the same function
+        // from inside a `.filter()` callback. TypeScript allows it — it cannot
+        // know the callback runs immediately — and it threw at runtime, in
+        // production, on a page that type-checked and built cleanly.
+        "@typescript-eslint/no-use-before-define": [
+          "error",
+          { variables: true, functions: false, typedefs: false, enums: false, ignoreTypeReferences: true },
+        ],
+      },
     },
 
     // Node

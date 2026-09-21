@@ -25,6 +25,7 @@ import {
   type UnmeasuredReason,
 } from "../components/tokens";
 import { planScanSteps, stepStates } from "../scans/steps";
+import { scanCoverage, type Coverage } from "../scans/coverage";
 import { calculateStoreHealth, type ScoreCategory, type ScorableIssue } from "../scoring";
 import { catalogTitle } from "../issues/wording";
 
@@ -207,17 +208,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const running = inFlight.find((audit) => audit.status === "running") ?? inFlight[0] ?? null;
 
-  // Which areas have ever been checked, and what to check next. The order in
-  // SCAN_SCOPE_ORDER is the order StoreRx recommends, so "next" is simply the
-  // first area no scan has finished — no invented priority.
-  const inFlightScopes = new Set(inFlight.map((audit) => audit.scope));
-  const unscanned = SCAN_SCOPE_ORDER.filter((scope) => !lastScanned.has(scope));
-  const queueable = unscanned.filter((scope) => !inFlightScopes.has(scope));
-  const scansLeft =
-    planUsage.plan.limits.scans === null
-      ? null
-      : Math.max(0, planUsage.plan.limits.scans - planUsage.usage.scans);
-
   // Health, recomputed from what is on the store right now and what has
   // actually been checked. A category nothing has examined reports no score
   // rather than a flattering one, and the reason it has none is shown.
@@ -235,6 +225,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const lastScanned = new Map(lastByScope.map((row) => [row.scope, row._max.completedAt]));
   const scopeLabel = (scope: string) => (isScanScope(scope) ? SCAN_SCOPES[scope].label : scope);
+
+  const coverage = scanCoverage({
+    scanned: lastScanned.keys(),
+    inFlight: inFlight.map((audit) => audit.scope),
+    scansLeft:
+      planUsage.plan.limits.scans === null
+        ? null
+        : Math.max(0, planUsage.plan.limits.scans - planUsage.usage.scans),
+  });
 
   return {
     hasScan: Boolean(latestScan),
@@ -295,17 +294,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             error: failedScan.error ?? "unknown error",
           }
         : null,
-    coverage: {
-      checked: SCAN_SCOPE_ORDER.length - unscanned.length,
-      total: SCAN_SCOPE_ORDER.length,
-      // The next area to check, so the merchant is never left choosing between
-      // nine buttons with nothing to go on.
-      next: queueable[0]
-        ? { scope: queueable[0], label: SCAN_SCOPES[queueable[0]].label, description: SCAN_SCOPES[queueable[0]].description }
-        : null,
-      remaining: queueable.length,
-      scansLeft,
-    },
+    coverage,
     areas: SCAN_SCOPE_ORDER.map((scope) => {
       const spec = SCAN_SCOPES[scope];
       const when = lastScanned.get(scope);
@@ -438,13 +427,7 @@ function HealthHero({
   busy,
 }: {
   health: { overall: number | null; checksRun: number; checksTotal: number };
-  coverage: {
-    checked: number;
-    total: number;
-    next: { scope: ScanScope; label: string; description: string } | null;
-    remaining: number;
-    scansLeft: number | null;
-  };
+  coverage: Coverage;
   latestScan: { id: string; label: string; date: string; newCount: number; resolvedCount: number } | null;
   critical: number;
   improvements: number;
@@ -542,21 +525,14 @@ function NextStep({
   onScanRemaining,
   onBrowse,
 }: {
-  coverage: {
-    checked: number;
-    total: number;
-    next: { scope: ScanScope; label: string; description: string } | null;
-    remaining: number;
-    scansLeft: number | null;
-  };
+  coverage: Coverage;
   busy: boolean;
   onScanArea: (scope: ScanScope) => void;
   onScanRemaining: () => void;
   onBrowse: () => void;
 }) {
-  const { next, remaining, scansLeft } = coverage;
-  const canQueueAll = remaining > 1 && (scansLeft === null || scansLeft > 1);
-  const willQueue = scansLeft === null ? remaining : Math.min(remaining, scansLeft);
+  const { next, remaining, scansLeft, canQueue } = coverage;
+  const canQueueAll = remaining > 1 && canQueue > 1;
 
   return (
     <s-stack direction="block" gap="small">
@@ -589,9 +565,9 @@ function NextStep({
             </s-button>
             {canQueueAll && (
               <s-button variant="secondary" disabled={busy} onClick={onScanRemaining}>
-                {willQueue === remaining
-                  ? `Check all ${willQueue} remaining areas`
-                  : `Check ${willQueue} of the ${remaining} remaining areas`}
+                {canQueue === remaining
+                  ? `Check all ${canQueue} remaining areas`
+                  : `Check ${canQueue} of the ${remaining} remaining areas`}
               </s-button>
             )}
             <s-button variant="tertiary" onClick={onBrowse}>
