@@ -6,9 +6,14 @@
  * app/billing/billing.server.ts.
  *
  * Limits are counted over a rolling 30-day usage period that restarts when the
- * merchant changes plan. Scan limits protect PageSpeed quota and worker time;
- * AI limits protect OpenAI spend. Explanations are cached per rule, so a store
- * only spends AI credits on rules it has not had explained before.
+ * merchant changes plan. Scan limits protect PageSpeed quota and worker time.
+ *
+ * The two AI limits are deliberately different in kind. Explanations are cheap
+ * (0.034 cents each, measured), written once per rule per shop and cached, and
+ * there are only ~55 rules — so the whole lifetime of a store's explanations
+ * costs about two cents, and the limit exists only as a backstop. Drafted copy
+ * is what a merchant can run up without bound, and costs several times more per
+ * call, so that is what the plans actually meter.
  */
 
 export type PlanKey = "free" | "starter" | "growth" | "pro";
@@ -16,8 +21,22 @@ export type PlanKey = "free" | "starter" | "growth" | "pro";
 export interface PlanLimits {
   /** Scans per usage period, of any area. null = unlimited. */
   scans: number | null;
-  /** New AI credits per usage period: recommendations and drafted copy. Always capped, to protect margins. */
-  aiCredits: number;
+  /**
+   * Explanations of found issues. An explanation is written once per rule per
+   * shop and cached, and there are only ~55 rules, so a shop's whole lifetime
+   * of explanations costs around two cents — measured, not estimated. This
+   * limit is a backstop against a pathological loop, not a lever: a merchant
+   * checking their whole store must never run out, or the product stops
+   * explaining itself halfway through.
+   */
+  aiExplanations: number;
+  /**
+   * Copy drafted on request — alt text, SEO titles, descriptions. Unbounded by
+   * anything but the merchant's clicking, and several times pricier per call
+   * (vision for images, a larger model for descriptions), so this is the limit
+   * that actually meters cost.
+   */
+  aiDrafts: number;
 }
 
 export interface PlanSpec {
@@ -43,32 +62,45 @@ export const PLANS: Record<PlanKey, PlanSpec> = {
     label: "Free",
     price: 0,
     summary: "See where your store loses sales",
-    features: ["9 scans a month — one of every area", "5 AI recommendations a month"],
-    limits: { scans: 9, aiCredits: 5 },
+    features: [
+      "9 scans a month — one of every area",
+      "Every issue explained",
+      "5 pieces of copy drafted for you",
+    ],
+    limits: { scans: 9, aiExplanations: 100, aiDrafts: 5 },
   },
   starter: {
     key: "starter",
     label: "Starter",
     price: 19,
     summary: "Weekly check-ups for a growing store",
-    features: ["60 scans a month — every area, weekly", "100 AI recommendations a month"],
-    limits: { scans: 60, aiCredits: 100 },
+    features: [
+      "60 scans a month — every area, weekly",
+      "Every issue explained",
+      "100 pieces of copy drafted a month",
+    ],
+    limits: { scans: 60, aiExplanations: 500, aiDrafts: 100 },
   },
   growth: {
     key: "growth",
     label: "Growth",
     price: 49,
     summary: "Scan as often as you change your store",
-    features: ["Unlimited scans", "500 AI recommendations a month"],
-    limits: { scans: null, aiCredits: 500 },
+    features: ["Unlimited scans", "Every issue explained", "500 pieces of copy drafted a month"],
+    limits: { scans: null, aiExplanations: 2000, aiDrafts: 500 },
   },
   pro: {
     key: "pro",
     label: "Pro",
     price: 99,
     summary: "For high-volume stores and agencies",
-    features: ["Unlimited scans", "2,000 AI recommendations a month", "Priority support"],
-    limits: { scans: null, aiCredits: 2000 },
+    features: [
+      "Unlimited scans",
+      "Every issue explained",
+      "2,000 pieces of copy drafted a month",
+      "Priority support",
+    ],
+    limits: { scans: null, aiExplanations: 5000, aiDrafts: 2000 },
   },
 };
 
@@ -145,8 +177,12 @@ export function allowance(used: number, limit: number | null): Allowance {
 
 export interface PeriodUsage {
   scans: number;
-  aiCredits: number;
+  aiExplanations: number;
+  aiDrafts: number;
 }
+
+/** AiUsage rows for anything other than an explanation are drafted copy. */
+export const EXPLAIN_TASK = "explain";
 
 /** Whether another scan fits the plan. */
 export function scanAllowance(plan: PlanSpec, usage: PeriodUsage): Allowance {

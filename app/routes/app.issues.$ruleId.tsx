@@ -5,7 +5,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive } from "../queue.server";
-import { aiCreditsRemaining, checkScanAllowed } from "../billing/billing.server";
+import { checkScanAllowed, draftsRemaining } from "../billing/billing.server";
 import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, scopeForRule } from "../scans/scopes";
 import { requestDraft, reapStaleDrafts } from "../suggestions/queue.server";
@@ -72,7 +72,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const catalog = isCatalogPage(first.pageType);
   const draftByTarget = new Map(drafts.map((draft) => [`${draft.issueId}:${draft.targetId}`, draft]));
-  const credits = await aiCreditsRemaining(shop);
+  const credits = await draftsRemaining(shop);
 
   const items = shown.map((issue) => {
     const target = draftTargetFor(issue);
@@ -167,10 +167,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       };
     }
 
-    if ((await aiCreditsRemaining(shop)) === 0) {
+    if ((await draftsRemaining(shop)) === 0) {
       return {
         ok: false as const,
-        error: "You've used all your AI credits this month.",
+        error: "You've used all the drafts on your plan this month.",
         limitReached: true as const,
       };
     }
@@ -380,8 +380,8 @@ export default function IssueDetail() {
               />
               <s-text color="subdued">
                 {data.credits === 0
-                  ? "You've used all your AI credits this month. They reset at the start of your next period."
-                  : `Each draft uses 1 AI credit. You have ${data.credits} left this month.`}
+                  ? "You've used all the drafts on your plan this month. They reset at the start of your next period."
+                  : `You have ${data.credits} ${data.credits === 1 ? "draft" : "drafts"} left this month.`}
               </s-text>
             </s-stack>
           </s-stack>
@@ -435,7 +435,7 @@ export default function IssueDetail() {
                     busy={busy}
                     disabledReason={
                       creditsSpent && item.draft.status === "none"
-                        ? "You've used all your AI credits this month. They reset at the start of your next period."
+                        ? "You've used all the drafts on your plan this month."
                         : null
                     }
                     adminHref={item.adminHref}

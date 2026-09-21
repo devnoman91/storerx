@@ -13,7 +13,7 @@ import {
   syncSubscription,
 } from "../billing/billing.server";
 import { PLANS, PLAN_ORDER, TRIAL_DAYS, isPaidPlanKey, type PlanKey } from "../billing/plans";
-import { AI_CREDIT_HINT, UsageRow } from "../components/usage";
+import { DRAFT_HINT, EXPLANATION_HINT, UsageRow } from "../components/usage";
 
 async function loadShop(shopDomain: string) {
   return prisma.shop.upsert({ where: { domain: shopDomain }, create: { domain: shopDomain }, update: {} });
@@ -89,7 +89,7 @@ const FAQ: [string, string][] = [
   ],
   [
     "What counts towards my limits?",
-    "Every scan you start counts towards your plan, whichever area it checks, apart from scans that fail. AI credits cover recommendations and any copy you ask StoreRx to draft. A recommendation is written the first time StoreRx sees an issue, so scanning the same area again doesn't use more of them.",
+    "Every scan you start counts, whichever area it checks, apart from scans that fail. Explanations are written the first time StoreRx meets an issue and then reused, so re-scanning costs none — every plan has more than a full check-up needs. Drafts are the copy you ask StoreRx to write for you, and those are counted per piece.",
   ],
 ];
 
@@ -138,9 +138,14 @@ export default function Billing() {
         <s-stack direction="block" gap="base">
           <UsageRow label="Scans" count={{ used: data.usage.scans, limit: current.limits.scans }} />
           <UsageRow
-            label="AI recommendations"
-            count={{ used: data.usage.aiCredits, limit: current.limits.aiCredits }}
-            hint={AI_CREDIT_HINT}
+            label="Issues explained"
+            count={{ used: data.usage.aiExplanations, limit: current.limits.aiExplanations }}
+            hint={EXPLANATION_HINT}
+          />
+          <UsageRow
+            label="Copy drafted for you"
+            count={{ used: data.usage.aiDrafts, limit: current.limits.aiDrafts }}
+            hint={DRAFT_HINT}
           />
           <s-text color="subdued">
             Limits reset on {data.resetsAt}.{data.renewsOn ? ` Your plan renews on ${data.renewsOn}.` : ""}

@@ -14,6 +14,7 @@ import {
   PLANS,
   SHOPIFY_PLAN_NAMES,
   currentPeriodStart,
+  EXPLAIN_TASK,
   isBillingUnavailableError,
   nextPeriodStart,
   planOf,
@@ -200,19 +201,23 @@ export async function getShopUsage(shop: BillingShop, now: Date = new Date()): P
 
   // Failed scans are not counted: the merchant got nothing from them.
   const counted = { shopId: shop.id, createdAt: { gte: periodStart }, status: { not: "failed" } };
-  const [scans, ai] = await Promise.all([
+  const since = { shopId: shop.id, createdAt: { gte: periodStart } };
+  const [scans, explanations, drafts] = await Promise.all([
     prisma.audit.count({ where: counted }),
-    prisma.aiUsage.aggregate({
-      where: { shopId: shop.id, createdAt: { gte: periodStart } },
-      _sum: { units: true },
-    }),
+    prisma.aiUsage.aggregate({ where: { ...since, task: EXPLAIN_TASK }, _sum: { units: true } }),
+    // Every other task is copy drafted on request.
+    prisma.aiUsage.aggregate({ where: { ...since, task: { not: EXPLAIN_TASK } }, _sum: { units: true } }),
   ]);
 
   return {
     plan: planOf(shop.plan),
     periodStart,
     resetsAt: nextPeriodStart(anchor, now),
-    usage: { scans, aiCredits: ai._sum.units ?? 0 },
+    usage: {
+      scans,
+      aiExplanations: explanations._sum.units ?? 0,
+      aiDrafts: drafts._sum.units ?? 0,
+    },
   };
 }
 
@@ -224,10 +229,20 @@ export async function checkScanAllowed(shop: BillingShop): Promise<ScanCheck> {
   return result.allowed ? { allowed: true } : { allowed: false, message: scanLimitMessage(plan, resetsAt) };
 }
 
-/** AI credits the shop may still spend this period, on explanations or drafts. */
-export async function aiCreditsRemaining(shop: BillingShop): Promise<number> {
+/**
+ * Explanations the shop may still generate. Generous by design — see
+ * PlanLimits — so a merchant checking their whole store is never left with
+ * findings nobody explained.
+ */
+export async function explanationsRemaining(shop: BillingShop): Promise<number> {
   const { plan, usage } = await getShopUsage(shop);
-  return Math.max(0, plan.limits.aiCredits - usage.aiCredits);
+  return Math.max(0, plan.limits.aiExplanations - usage.aiExplanations);
+}
+
+/** Pieces of copy the shop may still have drafted this period. */
+export async function draftsRemaining(shop: BillingShop): Promise<number> {
+  const { plan, usage } = await getShopUsage(shop);
+  return Math.max(0, plan.limits.aiDrafts - usage.aiDrafts);
 }
 
 export { PLANS };

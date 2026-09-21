@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CATEGORY_CHECK_COUNTS } from "../../app/scoring";
 import {
   PLANS,
   SHOPIFY_PLAN_NAMES,
@@ -42,7 +43,10 @@ describe("plans", () => {
     for (let i = 1; i < order.length; i++) {
       expect(order[i].price).toBeGreaterThan(order[i - 1].price);
       expect(size(order[i].limits.scans)).toBeGreaterThanOrEqual(size(order[i - 1].limits.scans));
-      expect(order[i].limits.aiCredits).toBeGreaterThanOrEqual(order[i - 1].limits.aiCredits);
+      expect(order[i].limits.aiDrafts).toBeGreaterThanOrEqual(order[i - 1].limits.aiDrafts);
+      expect(order[i].limits.aiExplanations).toBeGreaterThanOrEqual(
+        order[i - 1].limits.aiExplanations,
+      );
     }
   });
 });
@@ -63,8 +67,8 @@ describe("usage periods", () => {
 
 describe("scan limits", () => {
   it("blocks another scan on Free once the month's scans are used", () => {
-    expect(scanAllowance(PLANS.free, { scans: PLANS.free.limits.scans!, aiCredits: 0 }).allowed).toBe(false);
-    expect(scanAllowance(PLANS.free, { scans: 0, aiCredits: 0 }).allowed).toBe(true);
+    expect(scanAllowance(PLANS.free, { scans: PLANS.free.limits.scans!, aiExplanations: 0, aiDrafts: 0 }).allowed).toBe(false);
+    expect(scanAllowance(PLANS.free, { scans: 0, aiExplanations: 0, aiDrafts: 0 }).allowed).toBe(true);
   });
 
   it("gives Free enough scans to cover every area once", () => {
@@ -72,7 +76,7 @@ describe("scan limits", () => {
   });
 
   it("never blocks unlimited plans", () => {
-    expect(scanAllowance(PLANS.growth, { scans: 500, aiCredits: 0 })).toMatchObject({ allowed: true, remaining: Infinity });
+    expect(scanAllowance(PLANS.growth, { scans: 500, aiExplanations: 0, aiDrafts: 0 })).toMatchObject({ allowed: true, remaining: Infinity });
   });
 
   it("does not report negative remaining allowance", () => {
@@ -136,5 +140,31 @@ describe("billing availability", () => {
     });
     expect(isBillingUnavailableError(withData)).toBe(true);
     expect(isBillingUnavailableError(new Error("Throttled"))).toBe(false);
+  });
+});
+
+describe("what a plan has to cover", () => {
+  // Measured from real usage: one explanation costs 0.034 cents, is written
+  // once per rule per shop, and is then cached forever. There are only this
+  // many rules to explain, so a shop's lifetime explanation cost is ~2 cents.
+  const RULES_THAT_CAN_FIRE = Object.values(CATEGORY_CHECK_COUNTS).reduce((a, b) => a + b, 0);
+
+  it("lets every plan explain a whole store, including the free one", () => {
+    // A merchant who checks all nine areas must not be handed findings that
+    // nobody explained — that is the product failing, not a limit working.
+    for (const plan of Object.values(PLANS)) {
+      expect(plan.limits.aiExplanations, plan.key).toBeGreaterThan(RULES_THAT_CAN_FIRE);
+    }
+  });
+
+  it("gives the free plan enough scans to see every area once", () => {
+    expect(PLANS.free.limits.scans).toBeGreaterThanOrEqual(SCAN_SCOPE_ORDER.length);
+  });
+
+  it("meters drafts, which a merchant can run up without limit", () => {
+    // Drafts are the cost that scales with clicking, so unlike explanations
+    // they are deliberately scarce on the free plan.
+    expect(PLANS.free.limits.aiDrafts).toBeLessThan(PLANS.free.limits.aiExplanations);
+    expect(PLANS.pro.limits.aiDrafts).toBeGreaterThan(PLANS.free.limits.aiDrafts * 100);
   });
 });

@@ -42,6 +42,8 @@ export function UsageRow({
   );
 }
 
-/** The wording for what an AI credit is spent on. Used wherever credits appear. */
-export const AI_CREDIT_HINT =
-  "Spent when StoreRx first explains an issue, and when you ask it to draft copy.";
+/** What each allowance covers, wherever usage is shown. */
+export const EXPLANATION_HINT =
+  "Written once per issue and reused, so re-scanning an area costs nothing.";
+
+export const DRAFT_HINT = "Alt text, SEO titles and descriptions you ask StoreRx to write.";

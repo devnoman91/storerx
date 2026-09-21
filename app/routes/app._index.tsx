@@ -13,7 +13,7 @@ import { actionsFor, type IssueStatus } from "../remedies/actions";
 import type { RemedyKind, SuggestionKind } from "../remedies/types";
 import { IssueGroup, pagePath, issueHref, type PrescriptionView } from "../components/issue-ui";
 import { Callout, ScoreBar, ScoreDial, ShowMore, StateCard } from "../components/primitives";
-import { AI_CREDIT_HINT, UsageRow, type UsageCount } from "../components/usage";
+import { DRAFT_HINT, EXPLANATION_HINT, UsageRow, type UsageCount } from "../components/usage";
 import { HowItWorks } from "../components/how-it-works";
 import {
   AREA_ICON,
@@ -316,10 +316,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       isFree: planUsage.plan.key === "free",
       resetsAt: planUsage.resetsAt.toDateString(),
       scans: { used: planUsage.usage.scans, limit: planUsage.plan.limits.scans },
-      aiCredits: { used: planUsage.usage.aiCredits, limit: planUsage.plan.limits.aiCredits },
-      // Scans still run without credits; they just arrive unexplained. Saying
-      // so beats letting a merchant wonder why the advice stopped.
-      creditsSpent: planUsage.usage.aiCredits >= planUsage.plan.limits.aiCredits,
+      explanations: {
+        used: planUsage.usage.aiExplanations,
+        limit: planUsage.plan.limits.aiExplanations,
+      },
+      drafts: { used: planUsage.usage.aiDrafts, limit: planUsage.plan.limits.aiDrafts },
+      // Scans still run without explanations; the findings just arrive bare.
+      // Saying so beats letting a merchant wonder why the advice stopped.
+      explanationsSpent: planUsage.usage.aiExplanations >= planUsage.plan.limits.aiExplanations,
     },
     critical: prescriptions.filter((p) => p.severity === "high"),
     improvements: prescriptions.filter((p) => p.severity === "medium"),
@@ -827,13 +831,21 @@ function AreasPanel({
 function PlanUsage({
   plan,
 }: {
-  plan: { label: string; isFree: boolean; resetsAt: string; scans: UsageCount; aiCredits: UsageCount };
+  plan: {
+    label: string;
+    isFree: boolean;
+    resetsAt: string;
+    scans: UsageCount;
+    explanations: UsageCount;
+    drafts: UsageCount;
+  };
 }) {
   return (
     <s-section heading={`${plan.label} plan`}>
       <s-stack direction="block" gap="base">
         <UsageRow label="Scans" count={plan.scans} />
-        <UsageRow label="AI recommendations" count={plan.aiCredits} hint={AI_CREDIT_HINT} />
+        <UsageRow label="Issues explained" count={plan.explanations} hint={EXPLANATION_HINT} />
+        <UsageRow label="Copy drafted for you" count={plan.drafts} hint={DRAFT_HINT} />
         <s-stack direction="inline" gap="small" alignItems="center" justifyContent="space-between">
           <s-text color="subdued">Resets on {plan.resetsAt}.</s-text>
           <s-button variant="tertiary" href="/app/billing">
@@ -953,10 +965,11 @@ export default function Dashboard() {
 
       {/* Scans keep working without credits, but the advice stops, and a
           merchant should not have to work out why. */}
-      {data.plan.creditsSpent && (
-        <s-banner tone="warning" heading="You've used this month's AI recommendations">
-          New problems will still be found, but listed without an explanation until{" "}
-          {data.plan.resetsAt}. <s-link href="/app/billing">See plans</s-link>
+      {data.plan.explanationsSpent && (
+        <s-banner tone="warning" heading="StoreRx has stopped explaining new issues">
+          You&apos;ve reached this month&apos;s limit. Problems will still be found, but listed
+          without an explanation until {data.plan.resetsAt}.{" "}
+          <s-link href="/app/billing">See plans</s-link>
         </s-banner>
       )}
 

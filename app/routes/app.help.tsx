@@ -53,8 +53,8 @@ const FAQS: [string, string][] = [
     "Issues are updated when StoreRx checks that area again. Run a scan for the area you changed. Product issues are checked on your top products, so a product that is no longer sampled keeps its last result.",
   ],
   [
-    "What do AI credits get used on?",
-    "Writing the recommendation the first time StoreRx sees an issue, and drafting copy when you ask for it. Re-scanning an area you have already scanned costs no credits.",
+    "Does StoreRx ever stop explaining things?",
+    "No — every plan, including Free, can explain more issues than a whole store contains. An explanation is written the first time StoreRx meets an issue and then reused, so re-scanning an area costs nothing. What is counted per piece is copy you ask StoreRx to draft for you: alt text, SEO titles and descriptions.",
   ],
   [
     "How are scores calculated?",
@@ -62,7 +62,7 @@ const FAQS: [string, string][] = [
   ],
   [
     "What does each plan include?",
-    `Plans set how many scans and AI credits you get each month. Paid plans start with a ${TRIAL_DAYS}-day free trial. See Plans & billing for details.`,
+    `Plans set how many scans you get each month, and how much copy StoreRx will draft for you. Paid plans start with a ${TRIAL_DAYS}-day free trial. See Plans & billing for details.`,
   ],
   [
     "What data does StoreRx store?",
