@@ -28,7 +28,7 @@ import { collectCatalogImages } from "../app/collectors/images";
 import { NonRetryableError, StorefrontLockedError } from "../app/errors";
 import { EXPLAIN_PROMPT_VERSION, explainFindings } from "../app/ai/prompts";
 import { logUsage } from "../app/ai/generate";
-import { aiCreditsRemaining } from "../app/billing/billing.server";
+import { explanationsRemaining } from "../app/billing/billing.server";
 import type { Shop } from "@prisma/client";
 import { SEVERITY_WEIGHTS, type Finding, type ShopData } from "../app/rules/types";
 import { processAuditJob, type AuditProgress } from "./audit";
@@ -109,9 +109,9 @@ async function explainWithCache(
 
   // Plan allowance (FEATURES.md §11). Findings past it still show, with the
   // rule's own wording, and are explained once allowance is available again.
-  const remaining = await aiCreditsRemaining(shop);
+  const remaining = await explanationsRemaining(shop);
   if (remaining === 0) {
-    console.log(`[worker] ${shop.domain} has no AI credits left this period; ${misses.length} rule(s) unexplained`);
+    console.log(`[worker] ${shop.domain} has no AI explanations left this period; ${misses.length} rule(s) unexplained`);
     return { explanations, generated: 0, reused: hits.size };
   }
 

@@ -10,7 +10,7 @@ import prisma from "../app/db.server";
 import { unauthenticated } from "../app/shopify.server";
 import { logUsage } from "../app/ai/generate";
 import { generateAltText, generateDescription, generateSeo } from "../app/ai/prompts";
-import { aiCreditsRemaining } from "../app/billing/billing.server";
+import { draftsRemaining } from "../app/billing/billing.server";
 import { NonRetryableError } from "../app/errors";
 import type { SuggestionKind } from "../app/remedies/types";
 import {
@@ -203,10 +203,10 @@ async function runDraft(claimed: ClaimedSuggestion): Promise<void> {
 
   // Checked again here, not just when the merchant asked: several drafts can
   // be queued before any of them runs.
-  if ((await aiCreditsRemaining(shop)) === 0) {
+  if ((await draftsRemaining(shop)) === 0) {
     throw new NonRetryableError(
-      "You've used all your AI credits this month. They reset at the start of your next period, " +
-        "or you can upgrade for more.",
+      "You've used all the drafts on your plan this month. They reset at the start of your next " +
+        "period, or you can upgrade for more.",
     );
   }
 
