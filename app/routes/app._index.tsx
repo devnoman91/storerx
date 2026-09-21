@@ -1,11 +1,12 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
 import { checkScanAllowed, getShopUsage } from "../billing/billing.server";
+import { scanLimitMessage } from "../billing/plans";
 import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, isSelectableScope, type ScanScope } from "../scans/scopes";
 import { actionsFor, type IssueStatus } from "../remedies/actions";
@@ -181,7 +182,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       prisma.audit.findFirst({
         where: { shopId, status: "failed" },
         orderBy: { createdAt: "desc" },
-        select: { error: true, createdAt: true, scope: true },
+        select: { id: true, error: true, createdAt: true, scope: true },
       }),
       getShopUsage(shop),
     ]);
@@ -205,6 +206,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const running = inFlight.find((audit) => audit.status === "running") ?? inFlight[0] ?? null;
+
+  // Which areas have ever been checked, and what to check next. The order in
+  // SCAN_SCOPE_ORDER is the order StoreRx recommends, so "next" is simply the
+  // first area no scan has finished — no invented priority.
+  const inFlightScopes = new Set(inFlight.map((audit) => audit.scope));
+  const unscanned = SCAN_SCOPE_ORDER.filter((scope) => !lastScanned.has(scope));
+  const queueable = unscanned.filter((scope) => !inFlightScopes.has(scope));
+  const scansLeft =
+    planUsage.plan.limits.scans === null
+      ? null
+      : Math.max(0, planUsage.plan.limits.scans - planUsage.usage.scans);
 
   // Health, recomputed from what is on the store right now and what has
   // actually been checked. A category nothing has examined reports no score
@@ -255,6 +267,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           resolvedCount: latestScan.resolvedCount,
         }
       : null,
+    queued: inFlight
+      .filter((audit) => audit.status === "pending")
+      .map((audit) => ({ id: audit.id, label: scopeLabel(audit.scope) })),
     runningAudit: running
       ? {
           ...running,
@@ -272,10 +287,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null,
     // Only worth a query while something is waiting to be picked up.
     workerAlive: running?.status === "pending" ? await isWorkerAlive() : true,
-    failedError:
+    failedScan:
       failedScan && (!latestScan || failedScan.createdAt > latestScan.createdAt)
-        ? `${scopeLabel(failedScan.scope)} scan: ${failedScan.error ?? "unknown error"}`
+        ? {
+            id: failedScan.id,
+            label: scopeLabel(failedScan.scope),
+            error: failedScan.error ?? "unknown error",
+          }
         : null,
+    coverage: {
+      checked: SCAN_SCOPE_ORDER.length - unscanned.length,
+      total: SCAN_SCOPE_ORDER.length,
+      // The next area to check, so the merchant is never left choosing between
+      // nine buttons with nothing to go on.
+      next: queueable[0]
+        ? { scope: queueable[0], label: SCAN_SCOPES[queueable[0]].label, description: SCAN_SCOPES[queueable[0]].description }
+        : null,
+      remaining: queueable.length,
+      scansLeft,
+    },
     areas: SCAN_SCOPE_ORDER.map((scope) => {
       const spec = SCAN_SCOPES[scope];
       const when = lastScanned.get(scope);
@@ -298,6 +328,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       resetsAt: planUsage.resetsAt.toDateString(),
       scans: { used: planUsage.usage.scans, limit: planUsage.plan.limits.scans },
       aiCredits: { used: planUsage.usage.aiCredits, limit: planUsage.plan.limits.aiCredits },
+      // Scans still run without credits; they just arrive unexplained. Saying
+      // so beats letting a merchant wonder why the advice stopped.
+      creditsSpent: planUsage.usage.aiCredits >= planUsage.plan.limits.aiCredits,
     },
     critical: prescriptions.filter((p) => p.severity === "high"),
     improvements: prescriptions.filter((p) => p.severity === "medium"),
@@ -316,6 +349,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  let shopRow = await prisma.shop.findUnique({ where: { domain: shopDomain } });
+  if (!shopRow) shopRow = await prisma.shop.create({ data: { domain: shopDomain } });
+
+  // A queued scan has not started, so cancelling it removes the row entirely
+  // rather than filing it in History as a failure the merchant did not cause.
+  if (intent === "cancelScan") {
+    const removed = await prisma.audit.deleteMany({
+      where: { id: String(formData.get("auditId") ?? ""), shopId: shopRow.id, status: "pending" },
+    });
+    return removed.count > 0
+      ? { ok: true as const, cancelled: true as const }
+      : { ok: false as const, error: "That scan has already started, so it can't be cancelled." };
+  }
+
+  // Queue every area that has never been checked, as far as the plan allows.
+  if (intent === "scanRemaining") {
+    const { plan, usage, resetsAt } = await getShopUsage(shopRow);
+    const done = await prisma.audit.groupBy({
+      by: ["scope"],
+      where: { shopId: shopRow.id, status: { in: ["completed", "pending", "running"] } },
+    });
+    const covered = new Set(done.map((row) => row.scope));
+    const todo = SCAN_SCOPE_ORDER.filter((scope) => !covered.has(scope));
+    if (todo.length === 0) return { ok: true as const, queuedCount: 0 };
+
+    const allowed = plan.limits.scans === null ? todo.length : Math.max(0, plan.limits.scans - usage.scans);
+    if (allowed === 0) {
+      return { ok: false as const, error: scanLimitMessage(plan, resetsAt), limitReached: true as const };
+    }
+
+    const queue = todo.slice(0, allowed);
+    for (const scope of queue) await enqueueAudit(shopRow.id, scope);
+    return { ok: true as const, queuedCount: queue.length, skipped: todo.length - queue.length };
+  }
+
   if (intent !== "scan") {
     return { ok: false, error: `Unsupported action: ${String(intent)}` };
   }
@@ -324,25 +393,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: false, error: `Unknown scan area: ${String(requested)}` };
   }
 
-  let shop = await prisma.shop.findUnique({ where: { domain: shopDomain } });
-  if (!shop) {
-    shop = await prisma.shop.create({ data: { domain: shopDomain } });
-  }
-
   // A repeat request for an area already queued joins that scan, so it is not
   // charged against the plan a second time.
   const queued = await prisma.audit.findFirst({
-    where: { shopId: shop.id, scope: requested, status: { in: ["pending", "running"] } },
+    where: { shopId: shopRow.id, scope: requested, status: { in: ["pending", "running"] } },
     select: { id: true },
   });
   if (queued) return { ok: true, auditId: queued.id, alreadyQueued: true };
 
-  const allowed = await checkScanAllowed(shop);
+  const allowed = await checkScanAllowed(shopRow);
   if (!allowed.allowed) {
     return { ok: false, error: allowed.message, limitReached: true };
   }
 
-  const { id, created } = await enqueueAudit(shop.id, requested);
+  const { id, created } = await enqueueAudit(shopRow.id, requested);
   return { ok: true, auditId: id, alreadyQueued: !created };
 };
 
@@ -362,21 +426,33 @@ type AreaRow = {
  */
 function HealthHero({
   health,
+  coverage,
   latestScan,
   critical,
   improvements,
   minor,
   awaiting,
   onScan,
+  onScanArea,
+  onScanRemaining,
   busy,
 }: {
   health: { overall: number | null; checksRun: number; checksTotal: number };
+  coverage: {
+    checked: number;
+    total: number;
+    next: { scope: ScanScope; label: string; description: string } | null;
+    remaining: number;
+    scansLeft: number | null;
+  };
   latestScan: { id: string; label: string; date: string; newCount: number; resolvedCount: number } | null;
   critical: number;
   improvements: number;
   minor: number;
   awaiting: number;
   onScan: () => void;
+  onScanArea: (scope: ScanScope) => void;
+  onScanRemaining: () => void;
   busy: boolean;
 }) {
   const band = typeof health.overall === "number" ? scoreBand(health.overall) : null;
@@ -441,14 +517,97 @@ function HealthHero({
             </s-stack>
           )}
 
-          <s-stack direction="inline" gap="small" alignItems="center">
-            <s-button variant="primary" icon="search" disabled={busy} onClick={onScan}>
-              {latestScan ? "Scan another area" : "Start your first scan"}
-            </s-button>
-          </s-stack>
+          <NextStep
+            coverage={coverage}
+            busy={busy}
+            onScanArea={onScanArea}
+            onScanRemaining={onScanRemaining}
+            onBrowse={onScan}
+          />
         </s-stack>
       </s-stack>
     </s-section>
+  );
+}
+
+/**
+ * What to do next. A merchant looking at nine areas has no way to know where
+ * to start, so StoreRx names one — the first area in its recommended order
+ * that has never been checked — and offers to queue the rest.
+ */
+function NextStep({
+  coverage,
+  busy,
+  onScanArea,
+  onScanRemaining,
+  onBrowse,
+}: {
+  coverage: {
+    checked: number;
+    total: number;
+    next: { scope: ScanScope; label: string; description: string } | null;
+    remaining: number;
+    scansLeft: number | null;
+  };
+  busy: boolean;
+  onScanArea: (scope: ScanScope) => void;
+  onScanRemaining: () => void;
+  onBrowse: () => void;
+}) {
+  const { next, remaining, scansLeft } = coverage;
+  const canQueueAll = remaining > 1 && (scansLeft === null || scansLeft > 1);
+  const willQueue = scansLeft === null ? remaining : Math.min(remaining, scansLeft);
+
+  return (
+    <s-stack direction="block" gap="small">
+      <s-stack direction="inline" gap="small-300" alignItems="center">
+        <s-icon
+          type={coverage.checked === coverage.total ? "check-circle" : "clipboard-checklist"}
+          tone={coverage.checked === coverage.total ? "success" : "info"}
+          size="small"
+        />
+        <s-text color="subdued">
+          {`${coverage.checked} of ${coverage.total} areas checked`}
+          {scansLeft !== null ? ` · ${scansLeft} scans left this month` : ""}
+        </s-text>
+      </s-stack>
+
+      {next ? (
+        <s-stack direction="block" gap="small-300">
+          <s-text>
+            <s-text type="strong">Check your {next.label.toLowerCase()} next</s-text>
+            {` — ${next.description.toLowerCase()}`}
+          </s-text>
+          <s-stack direction="inline" gap="small" alignItems="center">
+            <s-button
+              variant="primary"
+              icon={AREA_ICON[next.scope]}
+              disabled={busy || scansLeft === 0}
+              onClick={() => onScanArea(next.scope)}
+            >
+              {`Scan ${next.label}`}
+            </s-button>
+            {canQueueAll && (
+              <s-button variant="secondary" disabled={busy} onClick={onScanRemaining}>
+                {willQueue === remaining
+                  ? `Check all ${willQueue} remaining areas`
+                  : `Check ${willQueue} of the ${remaining} remaining areas`}
+              </s-button>
+            )}
+            <s-button variant="tertiary" onClick={onBrowse}>
+              Choose an area
+            </s-button>
+          </s-stack>
+        </s-stack>
+      ) : (
+        <s-stack direction="inline" gap="small" alignItems="center">
+          <s-text color="subdued">Every area has been checked at least once.</s-text>
+          <s-button variant="secondary" icon="refresh" onClick={onBrowse}>
+            Re-scan an area
+          </s-button>
+        </s-stack>
+      )}
+    </s-stack>
   );
 }
 
@@ -557,16 +716,24 @@ const STEP_TONE = { done: "success", active: "info", pending: "neutral" } as con
  */
 function ScanProgress({
   audit,
+  queued,
+  onCancel,
+  busy,
 }: {
   audit: {
+    id: string;
     label: string;
     status: string;
     progress: number;
     detail: string | null;
     steps: Array<{ label: string; state: "done" | "active" | "pending" }>;
   };
+  queued: Array<{ id: string; label: string }>;
+  onCancel: (auditId: string) => void;
+  busy: boolean;
 }) {
   const waiting = audit.status === "pending";
+  const waitingList = queued.filter((scan) => scan.id !== audit.id);
 
   return (
     <s-section heading={`Checking your ${audit.label.toLowerCase()}`}>
@@ -576,6 +743,11 @@ function ScanProgress({
           <s-text color="subdued">
             {waiting ? "Waiting for a worker to pick this up" : `${audit.progress}% complete`}
           </s-text>
+          {waiting && (
+            <s-button variant="tertiary" disabled={busy} onClick={() => onCancel(audit.id)}>
+              Cancel
+            </s-button>
+          )}
         </s-stack>
 
         <s-stack direction="block" gap="small-300">
@@ -592,6 +764,21 @@ function ScanProgress({
             </s-stack>
           ))}
         </s-stack>
+
+        {waitingList.length > 0 && (
+          <s-stack direction="block" gap="small-300">
+            <s-text color="subdued">{`Then ${waitingList.length} more queued`}</s-text>
+            {waitingList.map((scan) => (
+              <s-stack key={scan.id} direction="inline" gap="small" alignItems="center">
+                <s-icon type="clock" tone="neutral" size="small" />
+                <s-text color="subdued">{scan.label}</s-text>
+                <s-button variant="tertiary" disabled={busy} onClick={() => onCancel(scan.id)}>
+                  Cancel
+                </s-button>
+              </s-stack>
+            ))}
+          </s-stack>
+        )}
       </s-stack>
     </s-section>
   );
@@ -617,55 +804,46 @@ function AreasPanel({
         checked. After you make a change, scan that area again and StoreRx will verify it.
       </s-paragraph>
 
-      <s-stack direction="block" gap="small">
-        {areas.map((area) => {
-          const idle = area.state === "idle";
-          return (
-            <s-box key={area.scope} padding="base" background="subdued" borderRadius="base">
-              <s-stack direction="inline" gap="base" alignItems="center" justifyContent="space-between">
-                <s-stack direction="inline" gap="small" alignItems="start">
-                  <s-box paddingBlockStart="small-500">
-                    <s-icon type={AREA_ICON[area.scope]} tone="neutral" size="base" />
-                  </s-box>
-                  <s-stack direction="block" gap="small-500">
-                    <s-stack direction="inline" gap="small-300" alignItems="center">
-                      <s-text type="strong">{area.label}</s-text>
-                      {area.lastScanned && area.openIssues > 0 && (
-                        <s-badge tone="warning">
-                          {`${area.openIssues} open`}
-                        </s-badge>
-                      )}
-                      {area.lastScanned && area.openIssues === 0 && (
-                        <s-badge tone="success" icon="check-circle">
-                          Clear
-                        </s-badge>
-                      )}
-                    </s-stack>
-                    <s-text color="subdued">{area.description}</s-text>
-                    <s-text color="subdued">
-                      {area.lastScanned ? `Last scanned ${area.lastScanned}` : "Not scanned yet"}
-                    </s-text>
-                  </s-stack>
-                </s-stack>
-
-                <s-stack direction="inline" gap="small-300" alignItems="center">
-                  {area.state === "queued" && <s-badge tone="info" icon="clock">Queued</s-badge>}
-                  {area.state === "scanning" && <s-badge tone="info">Scanning</s-badge>}
-                  <s-button
-                    variant={area.lastScanned ? "tertiary" : "secondary"}
-                    icon={area.lastScanned ? "refresh" : "search"}
-                    disabled={busy || !idle}
-                    loading={area.state === "scanning"}
-                    onClick={() => onScan(area.scope)}
-                  >
-                    {area.lastScanned ? "Re-scan" : "Scan"}
-                  </s-button>
-                </s-stack>
+      {/* A compact grid: nine areas as nine tall rows pushed everything else
+          off the screen. */}
+      <s-grid gridTemplateColumns="repeat(auto-fit, minmax(250px, 1fr))" gap="base">
+        {areas.map((area) => (
+          <s-box key={area.scope} padding="base" background="subdued" borderRadius="base">
+            <s-stack direction="block" gap="small">
+              <s-stack direction="inline" gap="small-300" alignItems="center">
+                <s-icon type={AREA_ICON[area.scope]} tone="neutral" size="base" />
+                <s-text type="strong">{area.label}</s-text>
+                {area.state === "queued" && <s-badge tone="info">Queued</s-badge>}
+                {area.state === "scanning" && <s-badge tone="info">Scanning</s-badge>}
               </s-stack>
-            </s-box>
-          );
-        })}
-      </s-stack>
+
+              <s-text color="subdued">{area.description}</s-text>
+
+              <s-stack direction="inline" gap="small" alignItems="center" justifyContent="space-between">
+                {area.lastScanned ? (
+                  area.openIssues > 0 ? (
+                    <s-badge tone="warning">{`${area.openIssues} open`}</s-badge>
+                  ) : (
+                    <s-badge tone="success" icon="check-circle">Clear</s-badge>
+                  )
+                ) : (
+                  <s-text color="subdued">Not checked yet</s-text>
+                )}
+
+                <s-button
+                  variant={area.lastScanned ? "tertiary" : "secondary"}
+                  icon={area.lastScanned ? "refresh" : "search"}
+                  disabled={busy || area.state !== "idle"}
+                  loading={area.state === "scanning"}
+                  onClick={() => onScan(area.scope)}
+                >
+                  {area.lastScanned ? "Re-scan" : "Scan"}
+                </s-button>
+              </s-stack>
+            </s-stack>
+          </s-box>
+        ))}
+      </s-grid>
     </s-section>
   );
 }
@@ -733,6 +911,15 @@ export default function Dashboard() {
 
   const totalIssues = data.critical.length + data.improvements.length + data.minor.length;
 
+  // A scan finishing used to just swap the page's contents with no word about
+  // what happened. Hold on to the scan that completed while this page was open.
+  const [justFinished, setJustFinished] = useState<typeof data.latestScan>(null);
+  const wasScanning = useRef(isScanning);
+  useEffect(() => {
+    if (wasScanning.current && !isScanning && data.latestScan) setJustFinished(data.latestScan);
+    wasScanning.current = isScanning;
+  }, [isScanning, data.latestScan]);
+
   const startScan = (scope: ScanScope) => fetcher.submit({ intent: "scan", scope }, { method: "post" });
 
   // The hero's call to action has no single area to run, so it takes the
@@ -759,6 +946,44 @@ export default function Dashboard() {
 
   return (
     <s-page heading="Store health">
+      {justFinished && (
+        <s-banner
+          tone="success"
+          heading={`${justFinished.label} scan finished`}
+          onDismiss={() => setJustFinished(null)}
+        >
+          <s-stack direction="block" gap="small">
+            <s-paragraph>
+              {justFinished.newCount > 0
+                ? `${justFinished.newCount} new ${justFinished.newCount === 1 ? "problem" : "problems"} found.`
+                : "Nothing new found."}
+              {justFinished.resolvedCount > 0
+                ? ` ${justFinished.resolvedCount} verified fixed.`
+                : ""}
+            </s-paragraph>
+            <s-link href={`/app/history/${justFinished.id}`}>See what it checked</s-link>
+          </s-stack>
+        </s-banner>
+      )}
+
+      {fetcher.data && "queuedCount" in fetcher.data && fetcher.data.ok && (
+        <s-banner tone="info" heading={`${fetcher.data.queuedCount} scans queued`}>
+          StoreRx works through them one at a time. You can leave this page.
+          {"skipped" in fetcher.data && (fetcher.data.skipped ?? 0) > 0
+            ? ` ${fetcher.data.skipped} didn't fit in this month's plan.`
+            : ""}
+        </s-banner>
+      )}
+
+      {/* Scans keep working without credits, but the advice stops, and a
+          merchant should not have to work out why. */}
+      {data.plan.creditsSpent && (
+        <s-banner tone="warning" heading="You've used this month's AI recommendations">
+          New problems will still be found, but listed without an explanation until{" "}
+          {data.plan.resetsAt}. <s-link href="/app/billing">See plans</s-link>
+        </s-banner>
+      )}
+
       {fetcher.data && !fetcher.data.ok && (
         <s-banner tone={"limitReached" in fetcher.data ? "warning" : "critical"} heading="Scan not started">
           {fetcher.data.error}{" "}
@@ -766,9 +991,12 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {!isScanning && data.failedError && (
-        <s-banner tone="critical" heading="Last scan failed">
-          {data.failedError}
+      {!isScanning && data.failedScan && (
+        <s-banner tone="critical" heading={`Your ${data.failedScan.label} scan didn't finish`}>
+          <s-stack direction="block" gap="small">
+            <s-paragraph>{data.failedScan.error}</s-paragraph>
+            <s-link href={`/app/history/${data.failedScan.id}`}>See the report</s-link>
+          </s-stack>
         </s-banner>
       )}
 
@@ -783,10 +1011,18 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {isScanning && data.runningAudit && <ScanProgress audit={data.runningAudit} />}
+      {isScanning && data.runningAudit && (
+        <ScanProgress
+          audit={data.runningAudit}
+          queued={data.queued}
+          busy={isSubmitting}
+          onCancel={(auditId) => fetcher.submit({ intent: "cancelScan", auditId }, { method: "post" })}
+        />
+      )}
 
       <HealthHero
         health={data.health}
+        coverage={data.coverage}
         latestScan={data.latestScan}
         critical={data.critical.length}
         improvements={data.improvements.length}
@@ -794,6 +1030,8 @@ export default function Dashboard() {
         awaiting={data.awaitingCount}
         busy={isSubmitting}
         onScan={scrollToAreas}
+        onScanArea={startScan}
+        onScanRemaining={() => fetcher.submit({ intent: "scanRemaining" }, { method: "post" })}
       />
 
       {data.hasScan && (
