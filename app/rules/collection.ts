@@ -18,7 +18,7 @@ export const collectionRules: Rule[] = [
     id: "coll.filters",
     page: "collection",
     severity: "medium",
-    description: "Filtering and sorting on collection pages",
+    description: "Filtering and sorting",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       // Only Shopify's own `filter.*` fields count. The form around them also
@@ -45,7 +45,7 @@ export const collectionRules: Rule[] = [
     id: "coll.card.price",
     page: "collection",
     severity: "high",
-    description: "Prices shown on product cards",
+    description: "Prices on product cards",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const cards = page.productCards();
@@ -71,7 +71,7 @@ export const collectionRules: Rule[] = [
     id: "coll.card.atc",
     page: "collection",
     severity: "low",
-    description: "Quick add-to-cart on product cards",
+    description: "Quick add-to-cart on cards",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const cards = page.productCards();
@@ -99,7 +99,7 @@ export const collectionRules: Rule[] = [
     id: "coll.thin",
     page: "collection",
     severity: "medium",
-    description: "Collection has fewer than 4 products",
+    description: "How many products the collection has",
     check: (ctx: RuleContext): RuleResult => {
       const count = pageFor(ctx.html).productCards().length;
       // Empty is its own, more serious problem (coll.empty).
@@ -119,7 +119,7 @@ export const collectionRules: Rule[] = [
     id: "coll.image.consistency",
     page: "collection",
     severity: "medium",
-    description: "Product card images share one shape",
+    description: "Card images share one shape",
     check: (ctx: RuleContext): RuleResult => {
       const cards = pageFor(ctx.html).productCards();
       if (cards.length < 2) return null; // nothing to compare
@@ -155,7 +155,7 @@ export const collectionRules: Rule[] = [
     id: "coll.description",
     page: "collection",
     severity: "low",
-    description: "Collection has description text",
+    description: "Collection description text",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const description = page.all(
@@ -181,7 +181,7 @@ export const collectionRules: Rule[] = [
     id: "coll.empty",
     page: "collection",
     severity: "high",
-    description: "Published collection with no products",
+    description: "The collection has products in it",
     check: (ctx: RuleContext): RuleResult => {
       if (pageFor(ctx.html).productCards().length > 0) return null;
 

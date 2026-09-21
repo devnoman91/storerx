@@ -197,6 +197,21 @@ export function checkDuplicateImages(products: CatalogProduct[]): Finding[] {
 }
 
 /**
+ * What each catalog image check looks for. These checks are plain functions
+ * rather than Rule objects, so they carry no `description` — and a scan report
+ * that lists what it checked needs one for every check it ran.
+ */
+export const CATALOG_IMAGE_RULE_DESCRIPTIONS: Record<string, string> = {
+  "img.alt": "Images have alt text",
+  "img.size": `Image files under ${Math.round(IMAGE_SIZE_LIMIT_BYTES / 1024)} KB`,
+  "img.dims.large": `Images no larger than ${IMAGE_MAX_DIMENSION} px`,
+  "img.dims.small": `Images at least ${IMAGE_MIN_DIMENSION} px`,
+  "img.count": `At least ${MIN_IMAGES_PER_PRODUCT} images per product`,
+  "img.ratio": "Product images share one shape",
+  "img.duplicate": "No duplicate uploads",
+};
+
+/**
  * Every rule checkCatalogImages can report. A catalog scan evaluates all of
  * them at once, so these are the rules it has re-checked.
  */
@@ -221,7 +236,7 @@ export const imageRules: Rule[] = [
     id: "img.lazy",
     page: "images",
     severity: "low",
-    description: "Images not lazy-loaded / no srcset",
+    description: "Lazy loading and responsive images",
     check: (ctx: RuleContext): Finding | null => {
       const hasLazyLoading = /loading=["']lazy["']|data-src/i.test(ctx.html);
       const hasSrcset = /srcset/i.test(ctx.html);

@@ -79,7 +79,7 @@ export const productRules: Rule[] = [
     id: "prod.reviews.fold",
     page: "product",
     severity: "high",
-    description: "Reviews or a rating shown near the buy button",
+    description: "Reviews near the buy button",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const widgets = reviewWidgets(page, page.main);
@@ -151,7 +151,7 @@ export const productRules: Rule[] = [
     id: "prod.price.near.cta",
     page: "product",
     severity: "high",
-    description: "Price shown near the buy button",
+    description: "Price near the buy button",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const buyArea = page.buyArea;
@@ -175,7 +175,7 @@ export const productRules: Rule[] = [
     id: "prod.desc.short",
     page: "product",
     severity: "medium",
-    description: "Description is too short (under 80 words)",
+    description: "Description length",
     check: (ctx: RuleContext): RuleResult => {
       const html = descriptionOf(ctx);
       if (html === null) return UNCHECKED;
@@ -200,7 +200,7 @@ export const productRules: Rule[] = [
     id: "prod.desc.long",
     page: "product",
     severity: "low",
-    description: "Long description (over 600 words) with no headings or lists",
+    description: "Structure in a long description",
     check: (ctx: RuleContext): RuleResult => {
       const html = descriptionOf(ctx);
       if (html === null) return UNCHECKED;
@@ -223,7 +223,7 @@ export const productRules: Rule[] = [
     id: "prod.faq",
     page: "product",
     severity: "medium",
-    description: "FAQ, size guide or shipping & returns information",
+    description: "FAQ, size guide or shipping information",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const headings = page.all(
@@ -279,7 +279,7 @@ export const productRules: Rule[] = [
     id: "prod.crosssell",
     page: "product",
     severity: "medium",
-    description: "Related products, cross-sells or bundles",
+    description: "Related products or cross-sells",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const section = page.has(
@@ -310,7 +310,7 @@ export const productRules: Rule[] = [
     id: "prod.variants.oos",
     page: "product",
     severity: "high",
-    description: "Sold-out variants are marked as unavailable",
+    description: "Sold-out variants are marked",
     check: (ctx: RuleContext): RuleResult => {
       const product = productOf(ctx);
       // Which product this page shows has to be known, or every page would
@@ -349,7 +349,7 @@ export const productRules: Rule[] = [
     id: "prod.seo.title",
     page: "product",
     severity: "medium",
-    description: "SEO title missing or over 60 characters",
+    description: "SEO title length",
     check: (ctx: RuleContext): RuleResult => {
       const title = pageFor(ctx.html).doc.title.trim();
 
@@ -381,7 +381,7 @@ export const productRules: Rule[] = [
     id: "prod.seo.meta",
     page: "product",
     severity: "medium",
-    description: "Meta description missing or over 160 characters",
+    description: "Meta description length",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const meta = page
@@ -417,7 +417,7 @@ export const productRules: Rule[] = [
     id: "prod.schema",
     page: "product",
     severity: "low",
-    description: "Product structured data (JSON-LD or microdata)",
+    description: "Product structured data",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const types = page.structuredDataTypes();

@@ -149,6 +149,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: { shopId, status: "completed" },
         orderBy: { completedAt: "desc" },
         select: {
+          id: true,
           scope: true,
           completedAt: true,
           newCount: true,
@@ -247,6 +248,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     latestScan: latestScan
       ? {
+          id: latestScan.id,
           label: scopeLabel(latestScan.scope),
           date: (latestScan.completedAt ?? latestScan.createdAt).toLocaleString(),
           newCount: latestScan.newCount,
@@ -369,7 +371,7 @@ function HealthHero({
   busy,
 }: {
   health: { overall: number | null; checksRun: number; checksTotal: number };
-  latestScan: { label: string; date: string; newCount: number; resolvedCount: number } | null;
+  latestScan: { id: string; label: string; date: string; newCount: number; resolvedCount: number } | null;
   critical: number;
   improvements: number;
   minor: number;
@@ -430,9 +432,13 @@ function HealthHero({
           )}
 
           {latestScan && (
-            <s-text color="subdued">
-              {`Last scan: ${latestScan.label}, ${latestScan.date} · ${latestScan.newCount} new · ${latestScan.resolvedCount} verified`}
-            </s-text>
+            <s-stack direction="inline" gap="small-300" alignItems="center">
+              <s-text color="subdued">
+                {`Last scan: ${latestScan.label}, ${latestScan.date} · ${latestScan.newCount} new · ${latestScan.resolvedCount} verified`}
+              </s-text>
+              {/* Straight to what that scan checked and found. */}
+              <s-link href={`/app/history/${latestScan.id}`}>See the report</s-link>
+            </s-stack>
           )}
 
           <s-stack direction="inline" gap="small" alignItems="center">

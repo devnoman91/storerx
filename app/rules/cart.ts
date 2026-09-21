@@ -33,7 +33,7 @@ export const cartRules: Rule[] = [
     id: "cart.drawer",
     page: "cart",
     severity: "low",
-    description: "Adding to cart keeps shoppers on the page (drawer or popup)",
+    description: "A cart drawer or popup",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       // A notification popup keeps shoppers on the page just as a drawer does.
@@ -59,7 +59,7 @@ export const cartRules: Rule[] = [
     id: "cart.shipping.bar",
     page: "cart",
     severity: "medium",
-    description: "Free-shipping progress in the cart",
+    description: "Free-shipping progress",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const bar =
@@ -85,7 +85,7 @@ export const cartRules: Rule[] = [
     id: "cart.upsell",
     page: "cart",
     severity: "medium",
-    description: "Upsells or add-ons in the cart",
+    description: "Upsells or add-ons",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       if (!hasItems(page)) return UNCHECKED;
@@ -144,7 +144,7 @@ export const cartRules: Rule[] = [
     id: "cart.discount.prominent",
     page: "cart",
     severity: "low",
-    description: "A discount code field in the cart",
+    description: "A discount code field",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       if (!hasItems(page)) return UNCHECKED;
@@ -172,7 +172,7 @@ export const cartRules: Rule[] = [
     id: "cart.express",
     page: "cart",
     severity: "medium",
-    description: "Express checkout buttons in the cart",
+    description: "Express checkout buttons",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       if (!hasItems(page)) return UNCHECKED;

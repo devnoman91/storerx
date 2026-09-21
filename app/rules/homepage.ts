@@ -55,7 +55,7 @@ export const homepageRules: Rule[] = [
     id: "home.hero.cta",
     page: "homepage",
     severity: "high",
-    description: "The first section of the homepage has a call to action",
+    description: "A call to action in the first section",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const first = page.firstSection;
@@ -83,7 +83,7 @@ export const homepageRules: Rule[] = [
     id: "home.announcement",
     page: "homepage",
     severity: "medium",
-    description: "An announcement bar or a shipping promise at the top of the page",
+    description: "An announcement bar or shipping promise",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
 
@@ -112,7 +112,7 @@ export const homepageRules: Rule[] = [
     id: "home.featured",
     page: "homepage",
     severity: "medium",
-    description: "The homepage features products or collections",
+    description: "Featured products or collections",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const products = page.productCards().length;
@@ -136,7 +136,7 @@ export const homepageRules: Rule[] = [
     id: "home.trust",
     page: "homepage",
     severity: "high",
-    description: "Reviews, testimonials, guarantees or other social proof",
+    description: "Reviews, testimonials or guarantees",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       if (page.has(TRUST_WIDGET, page.main)) return null;
@@ -161,7 +161,7 @@ export const homepageRules: Rule[] = [
     id: "home.popups",
     page: "homepage",
     severity: "medium",
-    description: "More than one popup or email-capture tool loads on the homepage",
+    description: "How many popup tools load",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const tools = new Set<string>();
@@ -188,7 +188,7 @@ export const homepageRules: Rule[] = [
     id: "home.nav",
     page: "homepage",
     severity: "low",
-    description: "Search is available from the header",
+    description: "Search in the header",
     check: (ctx: RuleContext): RuleResult => {
       const page = pageFor(ctx.html);
       const scope = page.header ?? page.doc.body;

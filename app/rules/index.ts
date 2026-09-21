@@ -122,6 +122,7 @@ export { checkoutRules } from "./checkout";
 export {
   imageRules,
   CATALOG_IMAGE_RULE_IDS,
+  CATALOG_IMAGE_RULE_DESCRIPTIONS,
   checkCatalogImages,
   checkProductImages,
   checkDuplicateImages,

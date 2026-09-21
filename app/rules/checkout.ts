@@ -15,7 +15,7 @@ export const checkoutRules: Rule[] = [
     id: "chk.express",
     page: "checkout",
     severity: "high",
-    description: "Payment setup supports Shop Pay, Apple Pay or Google Pay",
+    description: "Express wallets supported",
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings) return null;
@@ -45,7 +45,7 @@ export const checkoutRules: Rule[] = [
     id: "chk.guest",
     page: "checkout",
     severity: "high",
-    description: "Customers can check out without logging in",
+    description: "Guest checkout",
     check: (ctx: RuleContext): Finding | null => {
       const settings = ctx.shopData?.checkoutSettings;
       if (!settings || settings.guestCheckoutEnabled) return null;

@@ -46,7 +46,7 @@ export const perfRules: Rule[] = [
     id: "perf.score.low",
     page: "perf",
     severity: "high",
-    description: "Lighthouse performance score below Lighthouse's passing band",
+    description: "Performance score",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh) return null;
@@ -72,7 +72,7 @@ export const perfRules: Rule[] = [
     id: "perf.lcp.slow",
     page: "perf",
     severity: "high",
-    description: "Largest Contentful Paint slower than 2.5s",
+    description: "Largest Contentful Paint",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.lcp <= 0) return null;
@@ -98,7 +98,7 @@ export const perfRules: Rule[] = [
     id: "perf.cls.high",
     page: "perf",
     severity: "high",
-    description: "Cumulative Layout Shift above 0.1",
+    description: "Layout shift",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh) return null;
@@ -124,7 +124,7 @@ export const perfRules: Rule[] = [
     id: "perf.tbt.high",
     page: "perf",
     severity: "high",
-    description: "Total Blocking Time above 200ms",
+    description: "Main-thread blocking time",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.tbt <= 0) return null;
@@ -150,7 +150,7 @@ export const perfRules: Rule[] = [
     id: "perf.inp.slow",
     page: "perf",
     severity: "medium",
-    description: "Interaction to Next Paint above 200ms (CrUX field data)",
+    description: "Interaction to Next Paint",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       // undefined means CrUX has no data for this store, not that INP is fine.
@@ -177,7 +177,7 @@ export const perfRules: Rule[] = [
     id: "perf.js.weight",
     page: "perf",
     severity: "high",
-    description: "Total JavaScript transfer weight over budget",
+    description: "JavaScript weight",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.totalJsWeight <= 0) return null;
@@ -201,7 +201,7 @@ export const perfRules: Rule[] = [
     id: "perf.apps.weight",
     page: "perf",
     severity: "medium",
-    description: "Third-party app scripts add significant page weight",
+    description: "App and third-party script weight",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.thirdPartyScripts.length === 0) return null;
@@ -234,7 +234,7 @@ export const perfRules: Rule[] = [
     id: "perf.apps.blocking",
     page: "perf",
     severity: "medium",
-    description: "A third-party script blocks the main thread",
+    description: "Third-party scripts blocking rendering",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh) return null;
@@ -269,7 +269,7 @@ export const perfRules: Rule[] = [
     id: "perf.render.blocking",
     page: "perf",
     severity: "medium",
-    description: "Render-blocking resources delay first paint",
+    description: "Render-blocking resources",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.renderBlockingCount === 0) return null;
@@ -293,7 +293,7 @@ export const perfRules: Rule[] = [
     id: "perf.fonts.count",
     page: "perf",
     severity: "low",
-    description: "More than 3 font files requested",
+    description: "Number of font files",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.fontCount <= MAX_FONTS) return null;
@@ -315,7 +315,7 @@ export const perfRules: Rule[] = [
     id: "perf.image.weight",
     page: "perf",
     severity: "medium",
-    description: "Total image transfer weight over budget",
+    description: "Image weight",
     check: (ctx: RuleContext): Finding | null => {
       const lh = ctx.lighthouse;
       if (!lh || lh.totalImageWeight <= 0) return null;
