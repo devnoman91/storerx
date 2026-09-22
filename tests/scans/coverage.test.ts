@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanCoverage } from "../../app/scans/coverage";
+import { scanCoverage, verificationScopes } from "../../app/scans/coverage";
 import { SCAN_SCOPE_ORDER } from "../../app/scans/scopes";
 
 describe("scan coverage", () => {
@@ -49,5 +49,30 @@ describe("scan coverage", () => {
   it("ignores scopes that are no longer offered", () => {
     // "full" is retired; an old scan of it must not count as coverage.
     expect(scanCoverage({ scanned: ["full"], scansLeft: 9 }).checked).toBe(0);
+  });
+});
+
+describe("verification scopes", () => {
+  it("costs one scan per area, however many issues are involved", () => {
+    // Four issues, two areas: two scans settle all four.
+    expect(
+      verificationScopes(["prod.reviews.fold", "prod.desc.short", "home.hero.cta", "home.trust.badges"]),
+    ).toEqual(["homepage", "product"]);
+  });
+
+  it("returns the areas in the order StoreRx offers them", () => {
+    expect(verificationScopes(["cart.upsell.none", "home.hero.cta"])).toEqual(["homepage", "cart"]);
+  });
+
+  it("skips an area whose scan is already on its way", () => {
+    expect(verificationScopes(["home.hero.cta", "prod.desc.short"], ["homepage"])).toEqual(["product"]);
+  });
+
+  it("ignores a rule no scan covers", () => {
+    expect(verificationScopes(["not.a.real.rule"])).toEqual([]);
+  });
+
+  it("has nothing to run when nothing is awaiting verification", () => {
+    expect(verificationScopes([])).toEqual([]);
   });
 });

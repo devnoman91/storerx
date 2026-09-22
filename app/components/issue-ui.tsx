@@ -168,16 +168,20 @@ export function IssueGroup({
   heading,
   intro,
   issues,
+  action,
 }: {
   heading: string;
   intro?: ReactNode;
   issues: PrescriptionView[];
+  /** One action for the whole band, e.g. the scan that would verify all of it. */
+  action?: ReactNode;
 }) {
   if (issues.length === 0) return null;
 
   return (
     <s-section heading={`${heading} (${issues.length})`}>
       {intro && <s-paragraph color="subdued">{intro}</s-paragraph>}
+      {action}
       <ShowMore
         items={issues}
         initial={4}

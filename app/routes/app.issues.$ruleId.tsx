@@ -5,7 +5,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive } from "../queue.server";
-import { checkScanAllowed, draftsRemaining } from "../billing/billing.server";
+import { checkScanAllowed, draftsRemaining, scansRemaining } from "../billing/billing.server";
+import { scanCostNote } from "../billing/plans";
 import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, scopeForRule } from "../scans/scopes";
 import { requestDraft, reapStaleDrafts } from "../suggestions/queue.server";
@@ -72,7 +73,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const catalog = isCatalogPage(first.pageType);
   const draftByTarget = new Map(drafts.map((draft) => [`${draft.issueId}:${draft.targetId}`, draft]));
-  const credits = await draftsRemaining(shop);
+  const [credits, scansLeft] = await Promise.all([draftsRemaining(shop), scansRemaining(shop)]);
 
   const items = shown.map((issue) => {
     const target = draftTargetFor(issue);
@@ -141,6 +142,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       ? { key: scope, label: SCAN_SCOPES[scope].label, state: inFlight?.status ?? null }
       : null,
     credits,
+    scansLeft,
     workerAlive: items.some((item) => item.draft.status === "pending") ? await isWorkerAlive() : true,
     resolvedAt: first.resolvedAt ? first.resolvedAt.toLocaleString() : null,
   };
@@ -497,7 +499,7 @@ export default function IssueDetail() {
               <s-button
                 variant={data.status === "awaiting_verification" ? "primary" : "tertiary"}
                 icon={data.scope.state ? undefined : AREA_ICON[data.scope.key]}
-                disabled={busy || data.scope.state !== null}
+                disabled={busy || data.scope.state !== null || data.scansLeft === 0}
                 loading={data.scope.state === "running"}
                 onClick={() => submit({ intent: "rescan" })}
               >
@@ -506,7 +508,14 @@ export default function IssueDetail() {
                   : `Re-scan ${data.scope.label}`}
               </s-button>
             )}
+            {data.scansLeft === 0 && <s-link href="/app/billing">See plans</s-link>}
           </s-stack>
+
+          {/* What the re-scan costs, before it is pressed — the drafted-copy
+              panel below has always said so, and a scan is the scarcer one. */}
+          {data.scope && !data.scope.state && (
+            <s-text color="subdued">{scanCostNote(1, data.scansLeft)}</s-text>
+          )}
         </s-stack>
       </s-section>
     </s-page>

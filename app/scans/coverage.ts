@@ -6,7 +6,7 @@
  * in a loader where an ordering mistake only shows up at runtime.
  */
 
-import { SCAN_SCOPES, SCAN_SCOPE_ORDER, type ScanScope } from "./scopes";
+import { SCAN_SCOPES, SCAN_SCOPE_ORDER, scopeForRule, type ScanScope } from "./scopes";
 
 export interface CoverageInput {
   /** Areas with at least one completed scan. */
@@ -27,6 +27,26 @@ export interface Coverage {
   scansLeft: number | null;
   /** How many of those the plan allows queueing right now. */
   canQueue: number;
+}
+
+/**
+ * The areas that would verify a set of rules: one scan each, in the order
+ * StoreRx offers them, skipping any area already queued or running.
+ *
+ * Marking issues done is per issue, but confirming them is per area — eight
+ * awaiting issues spread over two areas cost two scans, not eight.
+ */
+export function verificationScopes(
+  ruleIds: Iterable<string>,
+  inFlight: Iterable<string> = [],
+): ScanScope[] {
+  const busy = new Set(inFlight);
+  const wanted = new Set<ScanScope>();
+  for (const ruleId of ruleIds) {
+    const scope = scopeForRule(ruleId);
+    if (scope && !busy.has(scope)) wanted.add(scope);
+  }
+  return SCAN_SCOPE_ORDER.filter((scope) => wanted.has(scope));
 }
 
 export function scanCoverage({ scanned, inFlight = [], scansLeft }: CoverageInput): Coverage {

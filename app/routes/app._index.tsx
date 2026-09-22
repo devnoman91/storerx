@@ -6,7 +6,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
 import { checkScanAllowed, getShopUsage } from "../billing/billing.server";
-import { scanLimitMessage } from "../billing/plans";
+import { scanCostNote, scanLimitMessage, scansLeft as scansLeftOf } from "../billing/plans";
 import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, isSelectableScope, type ScanScope } from "../scans/scopes";
 import { actionsFor, type IssueStatus } from "../remedies/actions";
@@ -25,7 +25,7 @@ import {
   type UnmeasuredReason,
 } from "../components/tokens";
 import { planScanSteps, stepStates } from "../scans/steps";
-import { scanCoverage, type Coverage } from "../scans/coverage";
+import { scanCoverage, verificationScopes, type Coverage } from "../scans/coverage";
 import { calculateStoreHealth, type ScoreCategory, type ScorableIssue } from "../scoring";
 import { catalogTitle } from "../issues/wording";
 
@@ -226,14 +226,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const lastScanned = new Map(lastByScope.map((row) => [row.scope, row._max.completedAt]));
   const scopeLabel = (scope: string) => (isScanScope(scope) ? SCAN_SCOPES[scope].label : scope);
 
+  const scansLeft = scansLeftOf(planUsage.plan, planUsage.usage);
   const coverage = scanCoverage({
     scanned: lastScanned.keys(),
     inFlight: inFlight.map((audit) => audit.scope),
-    scansLeft:
-      planUsage.plan.limits.scans === null
-        ? null
-        : Math.max(0, planUsage.plan.limits.scans - planUsage.usage.scans),
+    scansLeft,
   });
+
+  // Issues the merchant says they have solved are not "to fix" — they are
+  // waiting on the scan that settles them, which is one scan per area
+  // however many issues are involved.
+  const awaiting = prescriptions.filter((p) => p.status === "awaiting_verification");
+  const open = prescriptions.filter((p) => p.status !== "awaiting_verification");
+  const verifyScopes = verificationScopes(
+    awaiting.map((p) => p.ruleId),
+    inFlight.map((audit) => audit.scope),
+  );
 
   return {
     // Advice about starting a worker is for whoever runs StoreRx, not for a
@@ -329,10 +337,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Saying so beats letting a merchant wonder why the advice stopped.
       explanationsSpent: planUsage.usage.aiExplanations >= planUsage.plan.limits.aiExplanations,
     },
-    critical: prescriptions.filter((p) => p.severity === "high"),
-    improvements: prescriptions.filter((p) => p.severity === "medium"),
-    minor: prescriptions.filter((p) => p.severity === "low"),
-    awaitingCount: prescriptions.filter((p) => p.status === "awaiting_verification").length,
+    critical: open.filter((p) => p.severity === "high"),
+    improvements: open.filter((p) => p.severity === "medium"),
+    minor: open.filter((p) => p.severity === "low"),
+    awaiting,
+    verify: {
+      areas: verifyScopes.map((scope) => SCAN_SCOPES[scope].label),
+      queueable: scansLeft === null ? verifyScopes.length : Math.min(verifyScopes.length, scansLeft),
+    },
     verified: [...verifiedByRule.entries()].map(([ruleId, entry]) => ({
       ruleId,
       title: isCatalogPage(entry.pageType) ? catalogTitle(ruleId, entry.count) ?? entry.title : entry.title,
@@ -359,6 +371,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return removed.count > 0
       ? { ok: true as const, cancelled: true as const }
       : { ok: false as const, error: "That scan has already started, so it can't be cancelled." };
+  }
+
+  // One scan per area holding an issue the merchant has marked done — the
+  // only way an issue can become resolved, and previously reachable only by
+  // opening each issue in turn and pressing re-scan on each.
+  if (intent === "verifyAll") {
+    const { plan, usage, resetsAt } = await getShopUsage(shopRow);
+    const awaiting = await prisma.issue.findMany({
+      where: { shopId: shopRow.id, status: "awaiting_verification" },
+      select: { ruleId: true },
+      distinct: ["ruleId"],
+    });
+    const inFlight = await prisma.audit.groupBy({
+      by: ["scope"],
+      where: { shopId: shopRow.id, status: { in: ["pending", "running"] } },
+    });
+    const allowance = scansLeftOf(plan, usage);
+    const todo = verificationScopes(
+      awaiting.map((issue) => issue.ruleId),
+      inFlight.map((row) => row.scope),
+    );
+    if (todo.length === 0) return { ok: true as const, queuedCount: 0 };
+    if (allowance === 0) {
+      return { ok: false as const, error: scanLimitMessage(plan, resetsAt), limitReached: true as const };
+    }
+
+    const queue = allowance === null ? todo : todo.slice(0, allowance);
+    for (const scope of queue) await enqueueAudit(shopRow.id, scope);
+    return { ok: true as const, queuedCount: queue.length, skipped: todo.length - queue.length };
   }
 
   // Queue every area that has never been checked, as far as the plan allows.
@@ -800,11 +841,13 @@ function ScanProgress({
 function AreasPanel({
   areas,
   pendingScope,
+  scansLeft,
   onScan,
 }: {
   areas: AreaRow[];
   /** Only the area being submitted goes busy — the other eight stay live. */
   pendingScope: ScanScope | null;
+  scansLeft: number | null;
   onScan: (scope: ScanScope) => void;
 }) {
   return (
@@ -813,6 +856,19 @@ function AreasPanel({
         Each area is scanned on its own, so you only spend time and AI credits on what you want
         checked. After you make a change, scan that area again and StoreRx will verify it.
       </s-paragraph>
+
+      {/* Nine buttons that each spend a scan, so say what they cost. */}
+      {scansLeft !== null && (
+        <s-stack direction="inline" gap="small-300" alignItems="center">
+          <s-icon
+            type={scansLeft === 0 ? "alert-circle" : "info"}
+            tone={scansLeft === 0 ? "warning" : "info"}
+            size="small"
+          />
+          <s-text color="subdued">{scanCostNote(1, scansLeft)}</s-text>
+          {scansLeft === 0 && <s-link href="/app/billing">See plans</s-link>}
+        </s-stack>
+      )}
 
       {/* A compact grid: nine areas as nine tall rows pushed everything else
           off the screen. */}
@@ -843,7 +899,7 @@ function AreasPanel({
                 <s-button
                   variant={area.lastScanned ? "tertiary" : "secondary"}
                   icon={area.lastScanned ? "refresh" : "search"}
-                  disabled={area.state !== "idle" || pendingScope === area.scope}
+                  disabled={area.state !== "idle" || pendingScope === area.scope || scansLeft === 0}
                   loading={area.state === "scanning" || pendingScope === area.scope}
                   onClick={() => onScan(area.scope)}
                 >
@@ -884,6 +940,77 @@ function PlanUsage({
         </s-stack>
       </s-stack>
     </s-section>
+  );
+}
+
+type VerifyView = { areas: string[]; queueable: number };
+
+/**
+ * Issues the merchant says they have solved, waiting on the scan that settles
+ * them. They are kept out of "Fix first" — telling someone to fix what they
+ * have just fixed is how a checklist loses their trust — and the whole band
+ * clears in one action, because verification costs a scan per area however
+ * many issues are involved.
+ */
+function AwaitingVerification({
+  issues,
+  verify,
+  scansLeft,
+  pending,
+  onVerify,
+}: {
+  issues: PrescriptionView[];
+  verify: VerifyView;
+  scansLeft: number | null;
+  pending: boolean;
+  onVerify: () => void;
+}) {
+  if (issues.length === 0) return null;
+
+  const total = verify.areas.length;
+  // Nothing queueable means either a scan is already on its way, or the plan
+  // is spent — the note below the button says which.
+  const count = verify.queueable > 0 ? verify.queueable : total;
+  // Never claim more than the plan will actually run, the same way the hero's
+  // "Check 6 of the 7 remaining areas" does not.
+  const label =
+    count === 1
+      ? `Re-scan ${verify.areas[0]}`
+      : count < total
+        ? `Re-scan ${count} of the ${total} areas involved`
+        : `Re-scan the ${count} areas involved`;
+
+  return (
+    <IssueGroup
+      heading="Waiting to be verified"
+      intro="You've marked these done. StoreRx calls something solved only once a scan finds it gone, so your dashboard matches your real storefront."
+      issues={issues}
+      action={
+        total === 0 ? (
+          <Callout icon="clock">
+            A scan of the {issues.length === 1 ? "area" : "areas"} involved is already running.
+            StoreRx will settle {issues.length === 1 ? "this" : "these"} when it finishes.
+          </Callout>
+        ) : (
+          <s-stack direction="block" gap="small-500">
+            <s-stack direction="inline" gap="small" alignItems="center">
+              <s-button
+                variant="primary"
+                icon="refresh"
+                disabled={pending || scansLeft === 0}
+                loading={pending}
+                onClick={onVerify}
+              >
+                {label}
+              </s-button>
+              {scansLeft === 0 && <s-link href="/app/billing">See plans</s-link>}
+            </s-stack>
+            {/* The cost before the click, as the drafted-copy panel has always done. */}
+            <s-text color="subdued">{scanCostNote(count, scansLeft)}</s-text>
+          </s-stack>
+        )
+      }
+    />
   );
 }
 
@@ -934,10 +1061,12 @@ export default function Dashboard() {
   const requestedScope = pendingIntent === "scan" ? pending?.get("scope") : null;
   const pendingScope = isSelectableScope(requestedScope) ? requestedScope : null;
   const queueingAll = pendingIntent === "scanRemaining";
+  const verifying = pendingIntent === "verifyAll";
   const cancellingId =
     pendingIntent === "cancelScan" ? String(pending?.get("auditId") ?? "") : null;
 
-  const totalIssues = data.critical.length + data.improvements.length + data.minor.length;
+  const totalIssues =
+    data.critical.length + data.improvements.length + data.minor.length + data.awaiting.length;
 
   // A scan finishing used to just swap the page's contents with no word about
   // what happened. Hold on to the scan that completed while this page was open.
@@ -1079,7 +1208,7 @@ export default function Dashboard() {
         critical={data.critical.length}
         improvements={data.improvements.length}
         minor={data.minor.length}
-        awaiting={data.awaitingCount}
+        awaiting={data.awaiting.length}
         pendingScope={pendingScope}
         queueingAll={queueingAll}
         onScan={scrollToAreas}
@@ -1097,6 +1226,14 @@ export default function Dashboard() {
 
       {data.hasScan ? (
         <>
+          <AwaitingVerification
+            issues={data.awaiting}
+            verify={data.verify}
+            scansLeft={data.coverage.scansLeft}
+            pending={verifying}
+            onVerify={() => fetcher.submit({ intent: "verifyAll" }, { method: "post" })}
+          />
+
           <IssueGroup
             heading="Fix first"
             intro="These are costing you the most. Open one to see why it matters and what to do."
@@ -1141,7 +1278,12 @@ export default function Dashboard() {
       {/* The wrapper div (needed for scroll-to-areas) is not an s-section, so
           the page does not space it from the section below it. */}
       <div ref={areasRef} style={{ marginBottom: 24 }}>
-        <AreasPanel areas={data.areas} pendingScope={pendingScope} onScan={startScan} />
+        <AreasPanel
+          areas={data.areas}
+          pendingScope={pendingScope}
+          scansLeft={data.coverage.scansLeft}
+          onScan={startScan}
+        />
       </div>
 
       <PlanUsage plan={data.plan} />

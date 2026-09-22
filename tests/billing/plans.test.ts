@@ -12,6 +12,8 @@ import {
   planFromSubscriptionName,
   planOf,
   scanAllowance,
+  scanCostNote,
+  scansLeft,
   stateFromActiveSubscriptions,
   startsNewPeriod,
   type ShopBillingState,
@@ -166,5 +168,34 @@ describe("what a plan has to cover", () => {
     // they are deliberately scarce on the free plan.
     expect(PLANS.free.limits.aiDrafts).toBeLessThan(PLANS.free.limits.aiExplanations);
     expect(PLANS.pro.limits.aiDrafts).toBeGreaterThan(PLANS.free.limits.aiDrafts * 100);
+  });
+});
+
+describe("what a scan costs", () => {
+  const usage = { scans: 7, aiExplanations: 0, aiDrafts: 0 };
+
+  it("counts what the plan has left, never below zero", () => {
+    expect(scansLeft(PLANS.free, usage)).toBe(PLANS.free.limits.scans! - 7);
+    expect(scansLeft(PLANS.free, { ...usage, scans: 999 })).toBe(0);
+  });
+
+  it("has no number to give on an unlimited plan", () => {
+    const unlimited = { ...PLANS.pro, limits: { ...PLANS.pro.limits, scans: null } };
+    expect(scansLeft(unlimited, usage)).toBeNull();
+  });
+
+  it("states the cost before the merchant spends it", () => {
+    expect(scanCostNote(1, 3)).toBe("Uses 1 scan of the 3 left on your plan this month.");
+    expect(scanCostNote(2, 2)).toBe("Uses 2 scans of the 2 left on your plan this month.");
+    expect(scanCostNote(1, 1)).toBe("Uses 1 scan of the 1 left on your plan this month.");
+  });
+
+  it("says so plainly when there is nothing left to spend", () => {
+    // The button that would spend it is disabled, so this explains why.
+    expect(scanCostNote(3, 0)).toBe("You've used every scan on your plan this month.");
+  });
+
+  it("does not imply a limit where there is none", () => {
+    expect(scanCostNote(4, null)).toBe("Uses 4 scans — your plan has no monthly limit.");
   });
 });

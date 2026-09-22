@@ -20,6 +20,7 @@ import {
   planOf,
   scanAllowance,
   scanLimitMessage,
+  scansLeft,
   startsNewPeriod,
   stateFromActiveSubscriptions,
   type Allowance,
@@ -237,6 +238,12 @@ export async function checkScanAllowed(shop: BillingShop): Promise<ScanCheck> {
 export async function explanationsRemaining(shop: BillingShop): Promise<number> {
   const { plan, usage } = await getShopUsage(shop);
   return Math.max(0, plan.limits.aiExplanations - usage.aiExplanations);
+}
+
+/** Scans the shop may still run this period; null when the plan is unlimited. */
+export async function scansRemaining(shop: BillingShop): Promise<number | null> {
+  const { plan, usage } = await getShopUsage(shop);
+  return scansLeft(plan, usage);
 }
 
 /** Pieces of copy the shop may still have drafted this period. */

@@ -189,6 +189,25 @@ export function scanAllowance(plan: PlanSpec, usage: PeriodUsage): Allowance {
   return allowance(usage.scans, plan.limits.scans);
 }
 
+/** Scans the plan has left this period; null when the plan is unlimited. */
+export function scansLeft(plan: PlanSpec, usage: PeriodUsage): number | null {
+  return plan.limits.scans === null ? null : Math.max(0, plan.limits.scans - usage.scans);
+}
+
+/**
+ * What an action is about to spend, said before it is spent.
+ *
+ * Drafted copy has always stated its cost up front; scans did not, so a
+ * merchant on the Free plan could press "Re-scan" and find out afterwards that
+ * it was their last one.
+ */
+export function scanCostNote(count: number, left: number | null): string {
+  const scans = count === 1 ? "1 scan" : `${count} scans`;
+  if (left === null) return `Uses ${scans} — your plan has no monthly limit.`;
+  if (left === 0) return "You've used every scan on your plan this month.";
+  return `Uses ${scans} of the ${left === 1 ? "1 left" : `${left} left`} on your plan this month.`;
+}
+
 /** Message shown when a scan is refused, naming the limit and when it resets. */
 export function scanLimitMessage(plan: PlanSpec, resetsAt: Date): string {
   return (
