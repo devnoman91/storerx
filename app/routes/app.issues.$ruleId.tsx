@@ -513,7 +513,7 @@ export default function IssueDetail() {
 
           {/* What the re-scan costs, before it is pressed — the drafted-copy
               panel below has always said so, and a scan is the scarcer one. */}
-          {data.scope && !data.scope.state && (
+          {data.scope && !data.scope.state && data.scansLeft !== null && (
             <s-text color="subdued">{scanCostNote(1, data.scansLeft)}</s-text>
           )}
         </s-stack>

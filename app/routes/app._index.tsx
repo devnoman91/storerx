@@ -6,7 +6,12 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { enqueueAudit, isWorkerAlive, reapStaleAudits } from "../queue.server";
 import { checkScanAllowed, getShopUsage } from "../billing/billing.server";
-import { scanCostNote, scanLimitMessage, scansLeft as scansLeftOf } from "../billing/plans";
+import {
+  scanCostNote,
+  scanLimitMessage,
+  scansLeft as scansLeftOf,
+  scansLeftNote,
+} from "../billing/plans";
 import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, isSelectableScope, type ScanScope } from "../scans/scopes";
 import { actionsFor, type IssueStatus } from "../remedies/actions";
@@ -107,7 +112,7 @@ function toPrescriptions(rows: IssueRow[]): PrescriptionView[] {
       verificationFailed: group.some((row) => row.verificationFailedAt !== null),
       explanation: first.explanation,
       subtitle,
-      primaryLabel: actions.primary.label,
+      canDraft: first.suggestionKind !== null,
       // Only a real destination goes on the card; the rest is on the detail page.
       secondary: actions.secondary?.href ? actions.secondary : null,
       count: group.length,
@@ -510,7 +515,9 @@ function HealthHero({
           </s-paragraph>
 
           {/* A score from four checks is not a verdict on the whole store, and
-              should not look like one. */}
+              should not look like one. Both halves of "how much of the store is
+              behind this number" belong on one line — they were on two, phrased
+              differently, and the tiles below said it a third time. */}
           {band && (
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <s-icon
@@ -520,8 +527,8 @@ function HealthHero({
               />
               <s-text color="subdued">
                 {partial
-                  ? `Based on ${health.checksRun} of ${health.checksTotal} checks — scan more areas for a fuller picture`
-                  : `Based on all ${health.checksTotal} checks`}
+                  ? `${coverage.checked} of ${coverage.total} areas checked · ${health.checksRun} of ${health.checksTotal} checks run — scan more for a fuller picture`
+                  : `Every area checked · all ${health.checksTotal} checks run`}
               </s-text>
             </s-stack>
           )}
@@ -591,18 +598,6 @@ function NextStep({
 
   return (
     <s-stack direction="block" gap="small">
-      <s-stack direction="inline" gap="small-300" alignItems="center">
-        <s-icon
-          type={coverage.checked === coverage.total ? "check-circle" : "clipboard-checklist"}
-          tone={coverage.checked === coverage.total ? "success" : "info"}
-          size="small"
-        />
-        <s-text color="subdued">
-          {`${coverage.checked} of ${coverage.total} areas checked`}
-          {scansLeft !== null ? ` · ${scansLeft} scans left this month` : ""}
-        </s-text>
-      </s-stack>
-
       {next ? (
         <s-stack direction="block" gap="small-300">
           <s-text>
@@ -635,6 +630,13 @@ function NextStep({
               Choose an area
             </s-button>
           </s-stack>
+          {/* What pressing one of those costs. Two buttons of different sizes,
+              so name the allowance rather than one button's price. */}
+          {scansLeft !== null && (
+            <s-text color="subdued">
+              {canQueueAll ? scansLeftNote(scansLeft) : scanCostNote(1, scansLeft)}
+            </s-text>
+          )}
         </s-stack>
       ) : (
         <s-stack direction="inline" gap="small" alignItems="center">
@@ -706,11 +708,14 @@ function CategoryScores({
                 {measured ? (
                   <s-stack direction="block" gap="small-500">
                     <s-text color="subdued">{meta.blurb}</s-text>
-                    {/* Say how much of the category this score covers, so a
-                        partial scan cannot read as a verdict on all of it. */}
-                    <s-text color="subdued">
-                      {`Based on ${row.checksRun} of ${row.checksTotal} checks`}
-                    </s-text>
+                    {/* Only when it changes the reading: a full category needs
+                        no arithmetic, and the hero already gives the store-wide
+                        figure. */}
+                    {row.checksRun < row.checksTotal && (
+                      <s-text color="subdued">
+                        {`Based on ${row.checksRun} of ${row.checksTotal} checks`}
+                      </s-text>
+                    )}
                     {row.checksRun < row.checksTotal && meta.scope && (
                       <s-button
                         variant="tertiary"
@@ -1006,7 +1011,9 @@ function AwaitingVerification({
               {scansLeft === 0 && <s-link href="/app/billing">See plans</s-link>}
             </s-stack>
             {/* The cost before the click, as the drafted-copy panel has always done. */}
-            <s-text color="subdued">{scanCostNote(count, scansLeft)}</s-text>
+            {scansLeft !== null && (
+              <s-text color="subdued">{scanCostNote(count, scansLeft)}</s-text>
+            )}
           </s-stack>
         )
       }

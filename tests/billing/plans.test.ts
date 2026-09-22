@@ -14,6 +14,7 @@ import {
   scanAllowance,
   scanCostNote,
   scansLeft,
+  scansLeftNote,
   stateFromActiveSubscriptions,
   startsNewPeriod,
   type ShopBillingState,
@@ -195,7 +196,9 @@ describe("what a scan costs", () => {
     expect(scanCostNote(3, 0)).toBe("You've used every scan on your plan this month.");
   });
 
-  it("does not imply a limit where there is none", () => {
-    expect(scanCostNote(4, null)).toBe("Uses 4 scans — your plan has no monthly limit.");
+  it("states the allowance where naming one button's price would be wrong", () => {
+    expect(scansLeftNote(3)).toBe("3 scans left on your plan this month.");
+    expect(scansLeftNote(1)).toBe("1 scan left on your plan this month.");
+    expect(scansLeftNote(0)).toBe("You've used every scan on your plan this month.");
   });
 });

@@ -85,7 +85,9 @@ export interface PrescriptionView {
   explanation: string | null;
   /** "Across 8 products" / "On 3 pages" / a single path. */
   subtitle: string | null;
-  primaryLabel: string;
+  /** Whether StoreRx can draft the copy this issue needs — said, not offered:
+   *  the drafting happens on the detail page. */
+  canDraft: boolean;
   secondary: { label: string; href?: string; unavailable?: string } | null;
   count: number;
 }
@@ -95,8 +97,13 @@ export function issueHref(ruleId: string): string {
 }
 
 /**
- * One prescription. The severity icon leads so a merchant can scan a column of
- * these and find what matters without reading a word.
+ * One prescription.
+ *
+ * The severity icon leads so a merchant can scan a column of these and find
+ * what matters without reading a word — which is also why the title is the
+ * link and the only button is the external destination. A per-row button whose
+ * label changed with the remedy ("View recommendation", "See suggested alt
+ * text") made the button column itself unreadable.
  */
 export function IssueCard({ issue }: { issue: PrescriptionView }) {
   const severity = severityToken(issue.severity);
@@ -117,9 +124,11 @@ export function IssueCard({ issue }: { issue: PrescriptionView }) {
             justifyContent="space-between"
           >
             <s-stack direction="block" gap="small-500">
-              <s-text type="strong">{issue.title}</s-text>
+              <s-link href={issueHref(issue.ruleId)}>{issue.title}</s-link>
               <s-text color="subdued">
-                {[issue.subtitle, remedy.label].filter(Boolean).join(" · ")}
+                {[issue.subtitle, remedy.label, issue.canDraft ? "copy can be drafted" : null]
+                  .filter(Boolean)
+                  .join(" · ")}
               </s-text>
             </s-stack>
             <s-stack direction="inline" gap="small-300" alignItems="center">
@@ -144,16 +153,13 @@ export function IssueCard({ issue }: { issue: PrescriptionView }) {
             </s-text>
           )}
 
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            <s-button variant="secondary" href={issueHref(issue.ruleId)}>
-              {issue.primaryLabel}
+          {/* One action, and it means the same thing on every row: go where
+              the work is done. Everything else is on the detail page. */}
+          {issue.secondary?.href && (
+            <s-button variant="tertiary" icon="external" href={issue.secondary.href}>
+              {issue.secondary.label}
             </s-button>
-            {issue.secondary?.href && (
-              <s-button variant="tertiary" icon="external" href={issue.secondary.href}>
-                {issue.secondary.label}
-              </s-button>
-            )}
-          </s-stack>
+          )}
         </s-stack>
       </s-stack>
     </s-box>

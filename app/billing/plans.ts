@@ -199,13 +199,22 @@ export function scansLeft(plan: PlanSpec, usage: PeriodUsage): number | null {
  *
  * Drafted copy has always stated its cost up front; scans did not, so a
  * merchant on the Free plan could press "Re-scan" and find out afterwards that
- * it was their last one.
+ * it was their last one. A plan with no limit has no cost to state, so callers
+ * show nothing rather than reassuring nobody.
  */
-export function scanCostNote(count: number, left: number | null): string {
-  const scans = count === 1 ? "1 scan" : `${count} scans`;
-  if (left === null) return `Uses ${scans} — your plan has no monthly limit.`;
+export function scanCostNote(count: number, left: number): string {
   if (left === 0) return "You've used every scan on your plan this month.";
+  const scans = count === 1 ? "1 scan" : `${count} scans`;
   return `Uses ${scans} of the ${left === 1 ? "1 left" : `${left} left`} on your plan this month.`;
+}
+
+/**
+ * The allowance on its own, for a place offering several actions of different
+ * sizes where naming one action's cost would be wrong.
+ */
+export function scansLeftNote(left: number): string {
+  if (left === 0) return "You've used every scan on your plan this month.";
+  return `${left === 1 ? "1 scan" : `${left} scans`} left on your plan this month.`;
 }
 
 /** Message shown when a scan is refused, naming the limit and when it resets. */
