@@ -115,6 +115,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   });
 
   return {
+    // Advice about starting a worker is for whoever runs StoreRx, not for a
+    // merchant, who can do nothing with it.
+    // eslint-disable-next-line no-undef
+    isDev: process.env.NODE_ENV !== "production",
     ruleId,
     title: catalog ? catalogTitle(ruleId, shown.length) ?? first.title : first.title,
     severity: first.severity,
@@ -305,9 +309,20 @@ export default function IssueDetail() {
       )}
 
       {drafting && !data.workerAlive && (
-        <s-banner tone="warning" heading="Nothing is processing your draft">
-          The worker isn&apos;t running. Start it with <s-text type="strong">npm run dev</s-text>, or
-          run <s-text type="strong">npm run worker</s-text> in a separate terminal.
+        <s-banner tone="warning" heading={"Your draft hasn't started yet"}>
+          <s-stack direction="block" gap="small">
+            <s-paragraph>
+              StoreRx is catching up. Your copy will be written as soon as it can — you can
+              leave this page and come back to it.
+            </s-paragraph>
+            {/* Only whoever is running StoreRx can act on this. */}
+            {data.isDev && (
+              <s-paragraph>
+                No worker is running. Start it with <s-text type="strong">npm run dev</s-text>,
+                or <s-text type="strong">npm run worker</s-text> in a separate terminal.
+              </s-paragraph>
+            )}
+          </s-stack>
         </s-banner>
       )}
 

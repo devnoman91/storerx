@@ -236,6 +236,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   return {
+    // Advice about starting a worker is for whoever runs StoreRx, not for a
+    // merchant, who can do nothing with it.
+    // eslint-disable-next-line no-undef
+    isDev: process.env.NODE_ENV !== "production",
     hasScan: Boolean(latestScan),
     health: {
       // No scan at all means no score, rather than a score built from nothing.
@@ -428,7 +432,8 @@ function HealthHero({
   onScan,
   onScanArea,
   onScanRemaining,
-  busy,
+  pendingScope,
+  queueingAll,
 }: {
   health: { overall: number | null; checksRun: number; checksTotal: number };
   coverage: Coverage;
@@ -440,7 +445,8 @@ function HealthHero({
   onScan: () => void;
   onScanArea: (scope: ScanScope) => void;
   onScanRemaining: () => void;
-  busy: boolean;
+  pendingScope: ScanScope | null;
+  queueingAll: boolean;
 }) {
   const band = typeof health.overall === "number" ? scoreBand(health.overall) : null;
   const partial = health.checksRun < health.checksTotal;
@@ -506,7 +512,8 @@ function HealthHero({
 
           <NextStep
             coverage={coverage}
-            busy={busy}
+            pendingScope={pendingScope}
+            queueingAll={queueingAll}
             onScanArea={onScanArea}
             onScanRemaining={onScanRemaining}
             onBrowse={onScan}
@@ -524,13 +531,16 @@ function HealthHero({
  */
 function NextStep({
   coverage,
-  busy,
+  pendingScope,
+  queueingAll,
   onScanArea,
   onScanRemaining,
   onBrowse,
 }: {
   coverage: Coverage;
-  busy: boolean;
+  /** The area whose scan is being submitted, if any — only it goes busy. */
+  pendingScope: ScanScope | null;
+  queueingAll: boolean;
   onScanArea: (scope: ScanScope) => void;
   onScanRemaining: () => void;
   onBrowse: () => void;
@@ -562,13 +572,19 @@ function NextStep({
             <s-button
               variant="primary"
               icon={AREA_ICON[next.scope]}
-              disabled={busy || scansLeft === 0}
+              disabled={scansLeft === 0 || pendingScope === next.scope}
+              loading={pendingScope === next.scope}
               onClick={() => onScanArea(next.scope)}
             >
               {`Scan ${next.label}`}
             </s-button>
             {canQueueAll && (
-              <s-button variant="secondary" disabled={busy} onClick={onScanRemaining}>
+              <s-button
+                variant="secondary"
+                disabled={queueingAll}
+                loading={queueingAll}
+                onClick={onScanRemaining}
+              >
                 {canQueue === remaining
                   ? `Check all ${canQueue} remaining areas`
                   : `Check ${canQueue} of the ${remaining} remaining areas`}
@@ -606,11 +622,11 @@ type CategoryRow = {
 function CategoryScores({
   categories,
   onScan,
-  busy,
+  pendingScope,
 }: {
   categories: CategoryRow[];
   onScan: (scope: ScanScope) => void;
-  busy: boolean;
+  pendingScope: ScanScope | null;
 }) {
   return (
     <s-section heading="Category scores">
@@ -658,7 +674,8 @@ function CategoryScores({
                       <s-button
                         variant="tertiary"
                         icon={AREA_ICON[meta.scope]}
-                        disabled={busy}
+                        disabled={pendingScope === meta.scope}
+                        loading={pendingScope === meta.scope}
                         onClick={() => onScan(meta.scope as ScanScope)}
                       >
                         {`Scan ${SCAN_SCOPES[meta.scope].label}`}
@@ -671,7 +688,8 @@ function CategoryScores({
                     <s-button
                       variant="tertiary"
                       icon={AREA_ICON[meta.scope]}
-                      disabled={busy}
+                      disabled={pendingScope === meta.scope}
+                      loading={pendingScope === meta.scope}
                       onClick={() => onScan(meta.scope as ScanScope)}
                     >
                       {`Scan ${SCAN_SCOPES[meta.scope].label}`}
@@ -698,7 +716,7 @@ function ScanProgress({
   audit,
   queued,
   onCancel,
-  busy,
+  cancellingId,
 }: {
   audit: {
     id: string;
@@ -710,7 +728,8 @@ function ScanProgress({
   };
   queued: Array<{ id: string; label: string }>;
   onCancel: (auditId: string) => void;
-  busy: boolean;
+  /** The scan whose cancellation is in flight, if any. */
+  cancellingId: string | null;
 }) {
   const waiting = audit.status === "pending";
   const waitingList = queued.filter((scan) => scan.id !== audit.id);
@@ -724,7 +743,12 @@ function ScanProgress({
             {waiting ? "Waiting for a worker to pick this up" : `${audit.progress}% complete`}
           </s-text>
           {waiting && (
-            <s-button variant="tertiary" disabled={busy} onClick={() => onCancel(audit.id)}>
+            <s-button
+              variant="tertiary"
+              disabled={cancellingId === audit.id}
+              loading={cancellingId === audit.id}
+              onClick={() => onCancel(audit.id)}
+            >
               Cancel
             </s-button>
           )}
@@ -752,7 +776,12 @@ function ScanProgress({
               <s-stack key={scan.id} direction="inline" gap="small" alignItems="center">
                 <s-icon type="clock" tone="neutral" size="small" />
                 <s-text color="subdued">{scan.label}</s-text>
-                <s-button variant="tertiary" disabled={busy} onClick={() => onCancel(scan.id)}>
+                <s-button
+                  variant="tertiary"
+                  disabled={cancellingId === scan.id}
+                  loading={cancellingId === scan.id}
+                  onClick={() => onCancel(scan.id)}
+                >
                   Cancel
                 </s-button>
               </s-stack>
@@ -770,11 +799,12 @@ function ScanProgress({
  */
 function AreasPanel({
   areas,
-  busy,
+  pendingScope,
   onScan,
 }: {
   areas: AreaRow[];
-  busy: boolean;
+  /** Only the area being submitted goes busy — the other eight stay live. */
+  pendingScope: ScanScope | null;
   onScan: (scope: ScanScope) => void;
 }) {
   return (
@@ -813,8 +843,8 @@ function AreasPanel({
                 <s-button
                   variant={area.lastScanned ? "tertiary" : "secondary"}
                   icon={area.lastScanned ? "refresh" : "search"}
-                  disabled={busy || area.state !== "idle"}
-                  loading={area.state === "scanning"}
+                  disabled={area.state !== "idle" || pendingScope === area.scope}
+                  loading={area.state === "scanning" || pendingScope === area.scope}
                   onClick={() => onScan(area.scope)}
                 >
                   {area.lastScanned ? "Re-scan" : "Scan"}
@@ -895,7 +925,17 @@ export default function Dashboard() {
   const revalidator = useRevalidator();
 
   const isScanning = Boolean(data.runningAudit);
-  const isSubmitting = fetcher.state !== "idle";
+
+  // Which control the merchant actually pressed. A single page-wide "busy"
+  // flag greyed out all nine areas, both hero buttons and every category tile
+  // while one scan was queueing, so the page looked broken rather than busy.
+  const pending = fetcher.state === "idle" ? null : fetcher.formData;
+  const pendingIntent = pending?.get("intent");
+  const requestedScope = pendingIntent === "scan" ? pending?.get("scope") : null;
+  const pendingScope = isSelectableScope(requestedScope) ? requestedScope : null;
+  const queueingAll = pendingIntent === "scanRemaining";
+  const cancellingId =
+    pendingIntent === "cancelScan" ? String(pending?.get("auditId") ?? "") : null;
 
   const totalIssues = data.critical.length + data.improvements.length + data.minor.length;
 
@@ -909,6 +949,19 @@ export default function Dashboard() {
   }, [isScanning, data.latestScan]);
 
   const startScan = (scope: ScanScope) => fetcher.submit({ intent: "scan", scope }, { method: "post" });
+
+  // Six banners could render at once — a queued scan, a spent allowance, an
+  // earlier failure and the result of the last click would stack and push the
+  // score, the point of the screen, off the top. Show two: the newest thing
+  // that happened, and the most severe condition that persists.
+  const showError = Boolean(fetcher.data && !fetcher.data.ok);
+  const showFinished = !showError && Boolean(justFinished);
+  const showQueued = !showError && !justFinished;
+  const workerDown = isScanning && data.runningAudit?.status === "pending" && !data.workerAlive;
+  const showFailedScan = !isScanning && !workerDown && Boolean(data.failedScan);
+  // The allowance is also stated, in full, in the plan section further down,
+  // so losing this banner to a more urgent one loses nothing.
+  const showExplanationsSpent = data.plan.explanationsSpent && !workerDown && !showFailedScan;
 
   // The hero's call to action has no single area to run, so it takes the
   // merchant to the list to choose one rather than picking for them.
@@ -934,7 +987,15 @@ export default function Dashboard() {
 
   return (
     <s-page heading="Store health">
-      {justFinished && (
+      {/* The transient banner: what just happened, in priority order. */}
+      {showError && fetcher.data && !fetcher.data.ok && (
+        <s-banner tone={"limitReached" in fetcher.data ? "warning" : "critical"} heading="Scan not started">
+          {fetcher.data.error}{" "}
+          {"limitReached" in fetcher.data && <s-link href="/app/billing">See plans</s-link>}
+        </s-banner>
+      )}
+
+      {showFinished && justFinished && (
         <s-banner
           tone="success"
           heading={`${justFinished.label} scan finished`}
@@ -954,7 +1015,7 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {fetcher.data && "queuedCount" in fetcher.data && fetcher.data.ok && (
+      {showQueued && fetcher.data && "queuedCount" in fetcher.data && fetcher.data.ok && (
         <s-banner tone="info" heading={`${fetcher.data.queuedCount} scans queued`}>
           StoreRx works through them one at a time. You can leave this page.
           {"skipped" in fetcher.data && (fetcher.data.skipped ?? 0) > 0
@@ -963,24 +1024,27 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {/* Scans keep working without credits, but the advice stops, and a
-          merchant should not have to work out why. */}
-      {data.plan.explanationsSpent && (
-        <s-banner tone="warning" heading="StoreRx has stopped explaining new issues">
-          You&apos;ve reached this month&apos;s limit. Problems will still be found, but listed
-          without an explanation until {data.plan.resetsAt}.{" "}
-          <s-link href="/app/billing">See plans</s-link>
+      {/* The standing banner: the most severe condition that persists. */}
+      {workerDown && (
+        <s-banner tone="warning" heading={"Your scan hasn't started yet"}>
+          <s-stack direction="block" gap="small">
+            <s-paragraph>
+              StoreRx is catching up. The scan will begin as soon as it can — you can leave
+              this page and come back to it.
+            </s-paragraph>
+            {/* Only whoever is running StoreRx can act on this. */}
+            {data.isDev && (
+              <s-paragraph>
+                No worker is running. Start it with <s-text type="strong">npm run dev</s-text>{" "}
+                (which starts one automatically), or{" "}
+                <s-text type="strong">npm run worker</s-text> in a separate terminal.
+              </s-paragraph>
+            )}
+          </s-stack>
         </s-banner>
       )}
 
-      {fetcher.data && !fetcher.data.ok && (
-        <s-banner tone={"limitReached" in fetcher.data ? "warning" : "critical"} heading="Scan not started">
-          {fetcher.data.error}{" "}
-          {"limitReached" in fetcher.data && <s-link href="/app/billing">See plans</s-link>}
-        </s-banner>
-      )}
-
-      {!isScanning && data.failedScan && (
+      {showFailedScan && data.failedScan && (
         <s-banner tone="critical" heading={`Your ${data.failedScan.label} scan didn't finish`}>
           <s-stack direction="block" gap="small">
             <s-paragraph>{data.failedScan.error}</s-paragraph>
@@ -989,14 +1053,13 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {/* A pending scan with no live worker would otherwise sit at 0% with
-          no explanation. Say what is actually wrong. */}
-      {isScanning && data.runningAudit?.status === "pending" && !data.workerAlive && (
-        <s-banner tone="warning" heading="Your scan is queued but not started">
-          The scan worker isn&apos;t running, so nothing is processing it yet. Start it
-          with <s-text type="strong">npm run dev</s-text> (it starts the worker
-          automatically), or run <s-text type="strong">npm run worker</s-text> in a
-          separate terminal. The scan will begin as soon as a worker is up.
+      {/* Scans keep working without credits, but the advice stops, and a
+          merchant should not have to work out why. */}
+      {showExplanationsSpent && (
+        <s-banner tone="warning" heading="StoreRx has stopped explaining new issues">
+          You&apos;ve reached this month&apos;s limit. Problems will still be found, but listed
+          without an explanation until {data.plan.resetsAt}.{" "}
+          <s-link href="/app/billing">See plans</s-link>
         </s-banner>
       )}
 
@@ -1004,7 +1067,7 @@ export default function Dashboard() {
         <ScanProgress
           audit={data.runningAudit}
           queued={data.queued}
-          busy={isSubmitting}
+          cancellingId={cancellingId}
           onCancel={(auditId) => fetcher.submit({ intent: "cancelScan", auditId }, { method: "post" })}
         />
       )}
@@ -1017,14 +1080,19 @@ export default function Dashboard() {
         improvements={data.improvements.length}
         minor={data.minor.length}
         awaiting={data.awaitingCount}
-        busy={isSubmitting}
+        pendingScope={pendingScope}
+        queueingAll={queueingAll}
         onScan={scrollToAreas}
         onScanArea={startScan}
         onScanRemaining={() => fetcher.submit({ intent: "scanRemaining" }, { method: "post" })}
       />
 
       {data.hasScan && (
-        <CategoryScores categories={data.health.categories} onScan={startScan} busy={isSubmitting} />
+        <CategoryScores
+          categories={data.health.categories}
+          onScan={startScan}
+          pendingScope={pendingScope}
+        />
       )}
 
       {data.hasScan ? (
@@ -1073,7 +1141,7 @@ export default function Dashboard() {
       {/* The wrapper div (needed for scroll-to-areas) is not an s-section, so
           the page does not space it from the section below it. */}
       <div ref={areasRef} style={{ marginBottom: 24 }}>
-        <AreasPanel areas={data.areas} busy={isSubmitting} onScan={startScan} />
+        <AreasPanel areas={data.areas} pendingScope={pendingScope} onScan={startScan} />
       </div>
 
       <PlanUsage plan={data.plan} />
