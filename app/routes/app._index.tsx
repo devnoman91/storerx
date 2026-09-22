@@ -499,7 +499,17 @@ function HealthHero({
 
   return (
     <s-section>
-      <s-stack direction="inline" gap="large-100" alignItems="center">
+      {/* The dial is a fixed 132px and the column beside it holds badges, a
+          timestamp, a coverage line and buttons. In an admin frame narrower
+          than ~640px — the sidebar open, or a phone — they cannot share a row,
+          so the grid drops to one column and the dial sits above the text.
+          Everything else on this page is either a wrapping inline stack or an
+          auto-fit grid, which handle narrow widths on their own. */}
+      <s-grid
+        gridTemplateColumns="@container (inline-size <= 640px) 1fr, auto 1fr"
+        gap="large-100"
+        alignItems="center"
+      >
         <ScoreDial score={health.overall} label="out of 100" />
 
         <s-stack direction="block" gap="small">
@@ -567,7 +577,7 @@ function HealthHero({
             onBrowse={onScan}
           />
         </s-stack>
-      </s-stack>
+      </s-grid>
     </s-section>
   );
 }
@@ -604,19 +614,23 @@ function NextStep({
             <s-text type="strong">Check your {next.label.toLowerCase()} next</s-text>
             {` — ${next.description.toLowerCase()}`}
           </s-text>
+          <s-button
+            variant="primary"
+            icon={AREA_ICON[next.scope]}
+            disabled={scansLeft === 0 || pendingScope === next.scope}
+            loading={pendingScope === next.scope}
+            onClick={() => onScanArea(next.scope)}
+          >
+            {`Scan ${next.label}`}
+          </s-button>
+
+          {/* The alternatives, quieter and on their own line. Three buttons of
+              three different weights in one row gave a merchant no idea which
+              one the screen wanted them to press. */}
           <s-stack direction="inline" gap="small" alignItems="center">
-            <s-button
-              variant="primary"
-              icon={AREA_ICON[next.scope]}
-              disabled={scansLeft === 0 || pendingScope === next.scope}
-              loading={pendingScope === next.scope}
-              onClick={() => onScanArea(next.scope)}
-            >
-              {`Scan ${next.label}`}
-            </s-button>
             {canQueueAll && (
               <s-button
-                variant="secondary"
+                variant="tertiary"
                 disabled={queueingAll}
                 loading={queueingAll}
                 onClick={onScanRemaining}
@@ -1295,24 +1309,14 @@ export default function Dashboard() {
 
       <PlanUsage plan={data.plan} />
 
+      {/* History, Settings and Help are in the app nav on every screen; three
+          more buttons for them here only added to the count of things a
+          merchant has to rule out. */}
       <s-section>
-        <s-stack direction="block" gap="small">
-          <Callout icon="shield-check-mark">
-            StoreRx examines your store and recommends what to change. You make every change
-            yourself — it never edits your store, your products or your theme.
-          </Callout>
-          <s-stack direction="inline" gap="small" alignItems="center">
-            <s-button variant="tertiary" icon="clock" href="/app/history">
-              Scan history
-            </s-button>
-            <s-button variant="tertiary" icon="settings" href="/app/settings">
-              Settings
-            </s-button>
-            <s-button variant="tertiary" icon="info" href="/app/help">
-              Help
-            </s-button>
-          </s-stack>
-        </s-stack>
+        <Callout icon="shield-check-mark">
+          StoreRx examines your store and recommends what to change. You make every change
+          yourself — it never edits your store, your products or your theme.
+        </Callout>
       </s-section>
     </s-page>
   );
