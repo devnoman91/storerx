@@ -684,6 +684,64 @@ function NextStep({
   );
 }
 
+/**
+ * The hero before anything has been scanned.
+ *
+ * A dial reading "—" measures nothing and explains nothing, and the empty-state
+ * card that used to follow it repeated the same call to action a third time.
+ * Until there is a score, the hero is the explanation and the one scan StoreRx
+ * recommends, with the loop it runs underneath.
+ */
+function WelcomeHero({
+  coverage,
+  scanning,
+  pendingScope,
+  queueingAll,
+  onScanArea,
+  onScanRemaining,
+  onBrowse,
+}: {
+  coverage: Coverage;
+  /** The first scan is already running; the progress steps are above. */
+  scanning: boolean;
+  pendingScope: ScanScope | null;
+  queueingAll: boolean;
+  onScanArea: (scope: ScanScope) => void;
+  onScanRemaining: () => void;
+  onBrowse: () => void;
+}) {
+  return (
+    <s-section>
+      <s-stack direction="block" gap="large-100">
+        <s-stack direction="block" gap="small">
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-icon type={scanning ? "clock" : "clipboard-checklist"} tone="info" size="base" />
+            <s-heading>{scanning ? "Your first scan is running" : "Nothing examined yet"}</s-heading>
+          </s-stack>
+          <s-paragraph color="subdued">
+            {scanning
+              ? "StoreRx is examining your store now. What it finds, and a score, will appear here when it finishes."
+              : "StoreRx examines one area at a time, explains what it finds and recommends how to put it right. Each scan takes a minute or two."}
+          </s-paragraph>
+          {/* Nothing has been reported yet, so pressing for a second scan here
+              would be selling a merchant something they cannot judge. */}
+          {!scanning && (
+            <NextStep
+              coverage={coverage}
+              pendingScope={pendingScope}
+              queueingAll={queueingAll}
+              onScanArea={onScanArea}
+              onScanRemaining={onScanRemaining}
+              onBrowse={onBrowse}
+            />
+          )}
+        </s-stack>
+        <HowItWorks heading="How it works" />
+      </s-stack>
+    </s-section>
+  );
+}
+
 type CategoryRow = {
   category: ScoreCategory;
   score: number | null;
@@ -1213,10 +1271,15 @@ export default function Dashboard() {
   const showExplanationsSpent = data.plan.explanationsSpent && !workerDown && !showFailedScan;
 
   // The hero's call to action has no single area to run, so it takes the
-  // merchant to the list to choose one rather than picking for them.
+  // merchant to the list to choose one rather than picking for them. Scrolling
+  // alone can be imperceptible — on a tall frame the panel is often already on
+  // screen and nothing moves — so focus follows too, the way a skip link works,
+  // and the keyboard lands where the button pointed.
   const areasRef = useRef<HTMLDivElement>(null);
-  const scrollToAreas = () =>
+  const scrollToAreas = () => {
     areasRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    areasRef.current?.focus({ preventScroll: true });
+  };
 
   // Poll while a scan is in flight so progress and results appear on their own.
   // Held in a ref because `revalidator` gets a new identity on every state
@@ -1321,20 +1384,32 @@ export default function Dashboard() {
         />
       )}
 
-      <HealthHero
-        health={data.health}
-        coverage={data.coverage}
-        latestScan={data.latestScan}
-        critical={data.critical.length}
-        improvements={data.improvements.length}
-        minor={data.minor.length}
-        awaiting={data.awaiting.length}
-        pendingScope={pendingScope}
-        queueingAll={queueingAll}
-        onScan={scrollToAreas}
-        onScanArea={startScan}
-        onScanRemaining={() => fetcher.submit({ intent: "scanRemaining" }, { method: "post" })}
-      />
+      {data.hasScan ? (
+        <HealthHero
+          health={data.health}
+          coverage={data.coverage}
+          latestScan={data.latestScan}
+          critical={data.critical.length}
+          improvements={data.improvements.length}
+          minor={data.minor.length}
+          awaiting={data.awaiting.length}
+          pendingScope={pendingScope}
+          queueingAll={queueingAll}
+          onScan={scrollToAreas}
+          onScanArea={startScan}
+          onScanRemaining={() => fetcher.submit({ intent: "scanRemaining" }, { method: "post" })}
+        />
+      ) : (
+        <WelcomeHero
+          coverage={data.coverage}
+          scanning={isScanning}
+          pendingScope={pendingScope}
+          queueingAll={queueingAll}
+          onScanArea={startScan}
+          onScanRemaining={() => fetcher.submit({ intent: "scanRemaining" }, { method: "post" })}
+          onBrowse={scrollToAreas}
+        />
+      )}
 
       {data.hasScan && (
         <CategoryScores
@@ -1344,7 +1419,7 @@ export default function Dashboard() {
         />
       )}
 
-      {data.hasScan ? (
+      {data.hasScan && (
         <>
           <AwaitingVerification
             issues={data.awaiting}
@@ -1400,31 +1475,12 @@ export default function Dashboard() {
 
           <VerifiedSection items={data.verified} />
         </>
-      ) : (
-        !isScanning && (
-          <s-section>
-            <s-stack direction="block" gap="large-100">
-              <StateCard
-                icon="clipboard-checklist"
-                heading="Nothing examined yet"
-                action={
-                  <s-button variant="primary" icon="search" onClick={scrollToAreas}>
-                    Choose an area
-                  </s-button>
-                }
-              >
-                Pick an area below and StoreRx will examine it, explain what it finds, and recommend
-                how to put it right. Each scan takes a minute or two.
-              </StateCard>
-              <HowItWorks heading="How it works" />
-            </s-stack>
-          </s-section>
-        )
       )}
 
       {/* The wrapper div (needed for scroll-to-areas) is not an s-section, so
-          the page does not space it from the section below it. */}
-      <div ref={areasRef} style={{ marginBottom: 24 }}>
+          the page does not space it from the section below it. tabIndex -1
+          makes it a focus target without putting it in the tab order. */}
+      <div ref={areasRef} id="areas" tabIndex={-1} style={{ marginBottom: 24 }}>
         <AreasPanel
           areas={data.areas}
           pendingScope={pendingScope}
