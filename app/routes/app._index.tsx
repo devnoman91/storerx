@@ -13,7 +13,14 @@ import {
   scansLeftNote,
 } from "../billing/plans";
 import { isCatalogPage } from "../scoring";
-import { SCAN_SCOPES, SCAN_SCOPE_ORDER, isScanScope, isSelectableScope, type ScanScope } from "../scans/scopes";
+import {
+  SCAN_SCOPES,
+  SCAN_SCOPE_ORDER,
+  isScanScope,
+  isSelectableScope,
+  scopeForRule,
+  type ScanScope,
+} from "../scans/scopes";
 import { actionsFor, type IssueStatus } from "../remedies/actions";
 import type { RemedyKind, SuggestionKind } from "../remedies/types";
 import { IssueGroup, pagePath, issueHref, type PrescriptionView } from "../components/issue-ui";
@@ -76,6 +83,7 @@ function toPrescriptions(rows: IssueRow[]): PrescriptionView[] {
   return [...groups.values()].map((group) => {
     const [first] = group;
     const catalog = isCatalogPage(first.pageType);
+    const scope = scopeForRule(first.ruleId);
     const places = new Set(group.map((row) => row.pageUrl ?? row.targetTitle)).size;
 
     // Every occurrence is awaiting verification, or the problem is still open.
@@ -104,6 +112,8 @@ function toPrescriptions(rows: IssueRow[]): PrescriptionView[] {
 
     return {
       ruleId: first.ruleId,
+      scope,
+      area: scope ? SCAN_SCOPES[scope].label : null,
       title: catalog ? catalogTitle(first.ruleId, group.length) ?? first.title : first.title,
       severity: first.severity,
       remedy: first.remedy,
@@ -342,6 +352,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // Saying so beats letting a merchant wonder why the advice stopped.
       explanationsSpent: planUsage.usage.aiExplanations >= planUsage.plan.limits.aiExplanations,
     },
+    // The areas holding something outstanding, for the filter above the
+    // lists. Built from the issues themselves, so it never offers an area with
+    // nothing to show.
+    issueAreas: SCAN_SCOPE_ORDER.filter((scope) => open.some((p) => p.scope === scope)).map(
+      (scope) => ({
+        scope,
+        label: SCAN_SCOPES[scope].label,
+        count: open.filter((p) => p.scope === scope).length,
+      }),
+    ),
     critical: open.filter((p) => p.severity === "high"),
     improvements: open.filter((p) => p.severity === "medium"),
     minor: open.filter((p) => p.severity === "low"),
@@ -1035,6 +1055,74 @@ function AwaitingVerification({
   );
 }
 
+type IssueArea = { scope: ScanScope; label: string; count: number };
+
+/**
+ * Which area's findings to read.
+ *
+ * StoreRx works area by area — you scan one, change what it found, scan it
+ * again to verify — but the findings were only ever grouped by severity, so
+ * "what did the product scan find?" was a question the dashboard could not
+ * answer. It sits above the lists it governs, and only appears when there is
+ * more than one area to choose between.
+ */
+function AreaFilter({
+  areas,
+  value,
+  total,
+  shown,
+  onChange,
+}: {
+  areas: IssueArea[];
+  value: "all" | ScanScope;
+  total: number;
+  shown: number;
+  onChange: (value: "all" | ScanScope) => void;
+}) {
+  // With one area there is nothing to choose between — unless a filter is
+  // already on, in which case hiding the control would strand the merchant in
+  // a filtered view.
+  if (areas.length < 2 && value === "all") return null;
+
+  // A chosen area whose last issue was just verified drops out of `areas`. Keep
+  // it in the list, at zero, rather than leaving the select pointing at an
+  // option that no longer exists.
+  const options =
+    value === "all" || areas.some((area) => area.scope === value)
+      ? areas
+      : [...areas, { scope: value, label: SCAN_SCOPES[value].label, count: 0 }];
+
+  return (
+    <s-section>
+      <s-stack direction="inline" gap="base" alignItems="end">
+        <s-select
+          label="Area"
+          value={value}
+          onChange={(event) => {
+            const next = event.currentTarget.value;
+            onChange(isSelectableScope(next) ? next : "all");
+          }}
+        >
+          <s-option value="all">{`All areas (${total})`}</s-option>
+          {options.map((area) => (
+            <s-option key={area.scope} value={area.scope}>
+              {`${area.label} (${area.count})`}
+            </s-option>
+          ))}
+        </s-select>
+        {value !== "all" && (
+          <s-stack direction="inline" gap="small" alignItems="center">
+            <s-text color="subdued">{`Showing ${shown} of ${total}`}</s-text>
+            <s-button variant="tertiary" onClick={() => onChange("all")}>
+              Show every area
+            </s-button>
+          </s-stack>
+        )}
+      </s-stack>
+    </s-section>
+  );
+}
+
 /** Proof the loop closed: the merchant changed something and a scan confirmed it. */
 function VerifiedSection({ items }: { items: Array<{ ruleId: string; title: string }> }) {
   if (items.length === 0) return null;
@@ -1088,6 +1176,17 @@ export default function Dashboard() {
 
   const totalIssues =
     data.critical.length + data.improvements.length + data.minor.length + data.awaiting.length;
+
+  // Which area's findings are on show. "Waiting to be verified" is deliberately
+  // not filtered: it is a queue of work in progress, and its one action queues
+  // a scan of every area involved, which a filtered list would misdescribe.
+  const [area, setArea] = useState<"all" | ScanScope>("all");
+  const inArea = (issue: PrescriptionView) => area === "all" || issue.scope === area;
+  const critical = data.critical.filter(inArea);
+  const improvements = data.improvements.filter(inArea);
+  const minor = data.minor.filter(inArea);
+  const openCount = data.critical.length + data.improvements.length + data.minor.length;
+  const shownCount = critical.length + improvements.length + minor.length;
 
   // A scan finishing used to just swap the page's contents with no word about
   // what happened. Hold on to the scan that completed while this page was open.
@@ -1255,19 +1354,46 @@ export default function Dashboard() {
             onVerify={() => fetcher.submit({ intent: "verifyAll" }, { method: "post" })}
           />
 
+          <AreaFilter
+            areas={data.issueAreas}
+            value={area}
+            total={openCount}
+            shown={shownCount}
+            onChange={setArea}
+          />
+
           <IssueGroup
             heading="Fix first"
             intro="These are costing you the most. Open one to see why it matters and what to do."
-            issues={data.critical}
+            issues={critical}
           />
-          <IssueGroup heading="Worth improving" issues={data.improvements} />
-          <IssueGroup heading="Minor" issues={data.minor} />
+          <IssueGroup heading="Worth improving" issues={improvements} />
+          <IssueGroup heading="Minor" issues={minor} />
 
           {totalIssues === 0 && (
             <s-section>
               <StateCard icon="check-circle" tone="success" heading="Nothing outstanding">
                 StoreRx found no open issues in the areas you have scanned. Scan another area below
                 to go deeper.
+              </StateCard>
+            </s-section>
+          )}
+
+          {/* A filter that hides everything must say so, or the page reads as
+              though the issues went away. */}
+          {area !== "all" && shownCount === 0 && openCount > 0 && (
+            <s-section>
+              <StateCard
+                icon="check-circle"
+                tone="success"
+                heading={`Nothing outstanding in ${SCAN_SCOPES[area].label}`}
+                action={
+                  <s-button variant="secondary" onClick={() => setArea("all")}>
+                    Show every area
+                  </s-button>
+                }
+              >
+                {`The other ${openCount} ${openCount === 1 ? "issue" : "issues"} StoreRx found are in areas you have filtered out.`}
               </StateCard>
             </s-section>
           )}

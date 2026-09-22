@@ -75,6 +75,10 @@ export function pagePath(url: string | null | undefined): string | null {
 export interface PrescriptionView {
   /** Rule ID — the prescription's stable identity and its detail URL. */
   ruleId: string;
+  /** The scan area that finds and verifies this, for filtering. */
+  scope: string | null;
+  /** That area's name, for reading. */
+  area: string | null;
   title: string;
   severity: string;
   remedy: string;
@@ -125,8 +129,17 @@ export function IssueCard({ issue }: { issue: PrescriptionView }) {
           >
             <s-stack direction="block" gap="small-500">
               <s-link href={issueHref(issue.ruleId)}>{issue.title}</s-link>
+              {/* The area leads: everything a merchant does with an issue —
+                  scanning for it, re-scanning to verify it — is per area, so a
+                  card that never named one left the two halves of the product
+                  unconnected. */}
               <s-text color="subdued">
-                {[issue.subtitle, remedy.label, issue.canDraft ? "copy can be drafted" : null]
+                {[
+                  issue.area,
+                  issue.subtitle,
+                  remedy.label,
+                  issue.canDraft ? "copy can be drafted" : null,
+                ]
                   .filter(Boolean)
                   .join(" · ")}
               </s-text>
