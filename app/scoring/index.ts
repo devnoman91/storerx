@@ -213,8 +213,8 @@ export interface StoreHealthOptions {
    */
   evaluatedRules?: ReadonlySet<string>;
   /**
-   * Measured Lighthouse score (mobile 70 / desktop 30). FEATURES.md §3 makes
-   * Lighthouse the source for the Performance category, so when it is supplied
+   * Measured Lighthouse score (mobile 70 / desktop 30). Lighthouse is the
+   * source for the Performance category, so when it is supplied
    * it replaces the findings-derived score — otherwise the overall score and
    * the Performance score shown next to it would disagree.
    *

@@ -107,7 +107,7 @@ async function explainWithCache(
   const explanations = new Map(hits);
   if (misses.length === 0) return { explanations, generated: 0, reused: hits.size };
 
-  // Plan allowance (FEATURES.md §11). Findings past it still show, with the
+  // Plan allowance (app/billing/plans.ts). Findings past it still show, with the
   // rule's own wording, and are explained once allowance is available again.
   const remaining = await explanationsRemaining(shop);
   if (remaining === 0) {

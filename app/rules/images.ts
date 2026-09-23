@@ -1,5 +1,5 @@
 /**
- * Image rules (FEATURES.md §5)
+ * Image rules
  *
  * Deterministic checks over catalog image metadata from the Admin API —
  * no image is downloaded. Per-image findings carry the image and product so

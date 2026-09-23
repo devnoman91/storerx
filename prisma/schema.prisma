@@ -47,9 +47,9 @@ model Shop {
   // Brand voice sample for AI generation
   brandVoice String?
 
-  // Storefront password, so audits can scan password-protected stores
-  // (FEATURES.md §15). A viewing password merchants share with testers — not
-  // an admin credential — and never sent back to the browser.
+  // Storefront password, so audits can scan password-protected stores. A
+  // viewing password merchants share with testers — not an admin credential —
+  // and never sent back to the browser.
   storefrontPassword String?
 
   // Unused: settings the UI once offered with nothing behind them — no

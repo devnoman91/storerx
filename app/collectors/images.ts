@@ -4,7 +4,7 @@
  * Reads image metadata for the whole catalog — dimensions, alt text, MIME
  * type and original file size — without downloading any image. That keeps
  * the scan cheap enough to cover every product, unlike the storefront crawl
- * which samples a handful of pages (FEATURES.md §5).
+ * which samples a handful of pages.
  *
  * Uses `media` rather than the deprecated `Product.images`: file size is
  * only exposed on MediaImage.originalSource.
@@ -36,8 +36,8 @@ const PAGE_SIZE = 50;
 
 /**
  * Upper bound on products scanned per audit. Keeps a large catalog from
- * stalling the audit on API throttling; the plan tiers in FEATURES.md §11
- * are where a full-catalog scan would be unlocked.
+ * stalling the audit on API throttling; the plan tiers in
+ * app/billing/plans.ts are where a full-catalog scan would be unlocked.
  */
 export const MAX_SCANNED_PRODUCTS = 250;
 

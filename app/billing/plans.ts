@@ -1,5 +1,5 @@
 /**
- * Plans, limits and subscription state (FEATURES.md §11).
+ * Plans, limits and subscription state.
  *
  * Pure functions only, so the rules that decide what a merchant can do are
  * unit-tested without Shopify or a database. Shopify billing calls live in

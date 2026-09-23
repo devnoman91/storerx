@@ -3,8 +3,17 @@
 # StoreRx — Claude Code Project Guide
 AI Conversion Doctor for Shopify. Audits a store area by area (CRO + performance + SEO + images), scores it, explains what it finds and recommends how to solve it. The merchant makes every change — StoreRx never writes to the store.
 
-**Full spec:** `docs/FEATURES.md` — read it before building any feature.
-**Design/wireframes:** `docs/DESIGN.md` — read it before building any UI screen.
+**The code is the spec.** There is no separate spec document; the old `docs/FEATURES.md` described an apply-and-undo product StoreRx no longer is. Before building, read the module that owns the behaviour:
+
+| Question | Source of truth |
+|---|---|
+| What each scan fetches and which rules it runs | `app/scans/scopes.ts` |
+| What a rule checks, and its severity | `app/rules/<page>.ts` |
+| Where the merchant solves each problem | `app/remedies/catalog.ts` |
+| How scores are computed | `app/scoring/index.ts` |
+| Plans, limits, AI allowances | `app/billing/plans.ts` |
+| Colours, icons, labels for severity / remedy / area / score | `app/components/tokens.ts` |
+| Shared UI building blocks | `app/components/primitives.tsx` |
 
 ## Non-negotiable rules
 
@@ -12,33 +21,39 @@ AI Conversion Doctor for Shopify. Audits a store area by area (CRO + performance
 2. **AI never writes to the store, full stop.** StoreRx detects, explains and recommends; the merchant makes every change. Where a rule's problem is solved is declared in `app/remedies/catalog.ts` (`admin` / `settings` / `theme` / `messaging`) and the UI turns that into a contextual action. Copy StoreRx drafts (`Suggestion`) is shown for review and copying — never applied. Never add an apply/undo path, and never label anything "Fix with AI".
 3. **No invented numbers.** Impact = High/Medium/Low. Never show "+X% conversion".
 4. **All LLM calls use Structured Outputs** via the single wrapper `app/ai/generate.ts`. No free-text parsing. No direct `openai` imports elsewhere.
-5. **No LLM/Lighthouse/Playwright inside request handlers.** Everything heavy runs in the worker (`worker/`). The job queue is the `Audit` table itself — workers claim `pending` rows with `FOR UPDATE SKIP LOCKED`. No external broker.
+5. **No LLM calls, PageSpeed requests or storefront fetches inside request handlers.** Everything heavy runs in the worker (`worker/`). The job queue is the `Audit` table itself — workers claim `pending` rows with `FOR UPDATE SKIP LOCKED`. No external broker.
 6. **Storefront changes only via Theme App Extension** (`extensions/storerx-theme/`). Never modify merchant theme files.
 7. Do not recommend "convert images to WebP" — Shopify CDN handles it.
 
 ## Stack
 
-Shopify Remix app template · TypeScript · Polaris · Prisma/PostgreSQL (also the job queue) · Playwright · Lighthouse · sharp · OpenAI SDK · Theme App Extension.
+Shopify app template for React Router 7 (`@shopify/shopify-app-react-router`) · TypeScript · Polaris web components (`<s-page>`, `<s-section>`…) · Prisma/PostgreSQL (also the job queue) · jsdom for parsing storefront HTML · Google PageSpeed Insights API for performance · OpenAI SDK · zod · Theme App Extension · vitest.
+
+No headless browser, local Lighthouse or image processing: storefront pages are fetched as HTML, speed comes from PageSpeed Insights, and catalog images are judged from Admin API metadata (dimensions, size, alt) without downloading them.
 
 ## Layout
 
 ```
 app/
-  routes/            Remix routes (embedded admin UI)
-  rules/             one file per page type: homepage.ts collection.ts product.ts cart.ts checkout.ts images.ts perf.ts
-  rules/types.ts     Rule = { id, page, severity, check(ctx) => Finding | null }
+  routes/            React Router routes (embedded admin UI) + webhooks
+  rules/             one file per page type: homepage collection product cart checkout images perf
+  rules/types.ts     Rule = { id, page, severity, check(ctx) => Finding | UNCHECKED | null }
+  rules/page.ts      pageFor(html) — the parsed page every page rule reads
+  scans/             scan scopes, the steps a scan walks, coverage
   remedies/          where each rule's problem is solved + the actions offered
   suggestions/       drafted copy queue (per item, on request)
   issues/            issue identity, reconciliation across scans, persistence
   scoring/           score calculation + weights
+  billing/           plans, allowances, Shopify Billing API
   ai/generate.ts     generate(prompt, schema, opts) — the only OpenAI entry point
-  ai/prompts/        one file per task (explain, description, faq, seo, alt, crosssell, imageQuality)
-  collectors/        admin.ts (GraphQL), storefront.ts (Playwright), lighthouse.ts
-components/        issue cards, recommendation panels, drafted-copy panel
-worker/              poll-loop processors: audit, suggestions
-extensions/storerx-theme/   app blocks: faq, trust-badges, crosssells, shipping-bar
+  ai/prompts/        one file per task: explain, description, faq, seo, alt
+  collectors/        admin.ts (GraphQL), storefront.ts (fetch), lighthouse.ts (PageSpeed Insights), images.ts (catalog media)
+  components/        tokens, primitives, issue cards, recommendation panels
+  queue.server.ts    audit queue: claim, heartbeat, reap
+worker/              poll-loop processors: index (loop), audit, suggestions
+extensions/storerx-theme/   app blocks: faq, trust-badges, cross-sells, shipping-bar
 prisma/schema.prisma
-docs/FEATURES.md
+tests/               mirrors app/; fixtures in tests/fixtures/
 ```
 
 ## Conventions
@@ -47,12 +62,13 @@ docs/FEATURES.md
 - Page rules read the parsed page through `pageFor(ctx.html)` (`app/rules/page.ts`) — never regex over raw HTML, which matches words in scripts, CSS and meta tags. Static HTML has no layout, so no rule may claim "above the fold" or "on mobile"; use structure ("in the section with the add-to-cart form").
 - A rule returns `null` only when it checked and passed. When the page lacks what it needs (an empty cart, an unknown product) it returns `UNCHECKED` — otherwise the scan would count it as checked and resolve open issues it never looked at.
 - Each rule is tested against the real Dawn pages in `tests/fixtures/dawn/`; build failing cases with `without()` from `tests/rules/helpers.ts`.
-- Findings carry `evidence` (selector, text snippet, or screenshot crop path) — the UI shows it.
-- Prompts include store context + brand voice metafield; outputs validated with zod before use.
+- Findings carry `evidence` (selector or text snippet) — the UI shows it.
+- Prompts include store context + brand voice; outputs validated with zod before use.
 - Log OpenAI token usage per shop (`AiUsage` table).
-- Audit samples pages (home, 3 collections, 5 top products, cart) — never full crawl in the audit job.
+- Scans sample pages (home, 3 collections, 5 products, cart) — never a full crawl. Catalog image checks cover every product through Admin API metadata instead.
 - Every rule ID must have an entry in `app/remedies/catalog.ts`; `tests/remedies` fails otherwise.
 - Issue lifecycle: `open` → `awaiting_verification` (merchant says they did it) → `resolved` (a scan confirmed it). Only a scan may resolve an issue.
+- UI colour, icon and label choices come from `app/components/tokens.ts`; don't invent new ones per screen.
 - Use `shopify-plugin:shopify-admin` skill for Admin GraphQL, `shopify-plugin:shopify-polaris-app-home` for UI, `shopify-plugin:shopify-liquid` for extension blocks. Validate GraphQL with `validate_graphql_codeblocks` before committing.
 
 ## Commands
@@ -60,10 +76,11 @@ docs/FEATURES.md
 ```
 npm run dev            # shopify app dev
 npm run worker         # audit worker (polls the Audit table)
-npm test               # vitest (rules + scoring)
+npm test               # vitest
+npm run typecheck
 npx prisma migrate dev
 ```
 
 ## Skills
 
-- `/storerx-audit` — add or modify audit rules, scoring, and AI prompts following the spec.
+- `/storerx-audit` (`.claude/skills/storerx-audit/`) — add or modify audit rules, scoring, drafted copy and AI prompts.

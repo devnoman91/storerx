@@ -1,11 +1,13 @@
 ---
 name: storerx-audit
-description: Add, modify, or review StoreRx audit rules, scoring, image checks, performance checks, and AI prompts/fixes. Use when the user asks to add a check, change a score, add a "Fix with AI" type, or write a prompt for the audit.
+description: Add, modify, or review StoreRx audit rules, scoring, image checks, performance checks, drafted copy and AI prompts. Use when the user asks to add a check, change a score, add a kind of drafted copy, or write a prompt for the audit.
 ---
 
 # StoreRx Audit Skill
 
-Source of truth: `docs/FEATURES.md` sections 3–8. Read the relevant section before changing anything.
+The code is the spec — there is no separate spec document. Before changing anything, read the rule file
+for the page, `app/scans/scopes.ts` (which scan runs the rule), `app/remedies/catalog.ts` and
+`app/scoring/index.ts`.
 
 ## Adding a rule
 
@@ -33,7 +35,8 @@ Source of truth: `docs/FEATURES.md` sections 3–8. Read the relevant section be
    - Rules about the product itself read its Admin data via `ctx.resourceId`.
 3. Register in `app/rules/index.ts`, and add its remedy to `app/remedies/catalog.ts`.
 4. Test against `tests/fixtures/dawn/` — a passing Dawn page, a failing one built with `without()`, and the `UNCHECKED` case.
-5. Add the row to the table in `docs/FEATURES.md` §4/§5/§6.
+5. Make sure a scan scope in `app/scans/scopes.ts` includes the rule — `UNREACHABLE_RULE_IDS` in
+   `app/scoring/index.ts` lists rules no scan runs, and tests assert against it.
 6. Deterministic only. If the check needs judgement (layout clutter, image quality), it belongs in `ai/prompts/` with a JSON schema and is flagged `source: 'ai'` and severity ≤ medium.
 
 ## Changing scores
@@ -41,7 +44,7 @@ Source of truth: `docs/FEATURES.md` sections 3–8. Read the relevant section be
 Weights live in `app/scoring/index.ts` (`SEVERITY_WEIGHTS` in `app/rules/types.ts`, category weights
 in `CATEGORY_WEIGHTS`). Score = 100 − Σ(weight × count) per category, floor 0, counting each rule
 once however many pages or images it hit (`collapseByRule`). Overall = weighted mean over
-*measured* categories only. Update §3 of the spec if weights change.
+*measured* categories only.
 
 ## Adding drafted copy (a `SuggestionKind`)
 
@@ -54,7 +57,8 @@ themselves, and only for fields Shopify actually exposes.
 3. Point the rule at it in `app/remedies/catalog.ts` — `suggestion` is only valid on `kind: "admin"`.
 4. Handle it in `worker/suggestions.ts`: read the current value from Admin GraphQL, generate,
    store `current` + `suggested`. Never write back.
-5. Drafts cost one AI credit and are checked against `aiCreditsRemaining` before generating.
+5. Drafts count against the plan's `aiDrafts` allowance (`app/billing/plans.ts`); check
+   `draftsRemaining()` in `app/billing/billing.server.ts` before queueing one.
 
 ## Adding a rule's remedy
 
@@ -67,15 +71,16 @@ Every rule ID needs an entry in `app/remedies/catalog.ts` saying where the merch
 - System prompt states: ecommerce copywriter, output JSON only, respect brand voice, no fabricated claims (no invented reviews, awards, materials, certifications).
 - Always include: product title, current copy, variants, tags, brand voice sample, target length.
 - Length limits in schema: SEO title ≤ 60 chars, meta ≤ 160, alt ≤ 125, description 120–250 words.
-- Vision prompts: send 1 image per call, max 1024px, `detail: 'low'` unless quality judgement needs more.
+- Vision: `generate()` accepts images, but no prompt uses them yet. If one does, send 1 image per call,
+  max 1024px, `detail: 'low'` unless quality judgement needs more.
 - Models: `gpt-4.1-mini` default; `gpt-4.1` only for product descriptions and layout judgement.
 
 ## Checklist before finishing
 
 - [ ] Rule is deterministic and has pass/fail fixture tests
 - [ ] Evidence string is human-readable and specific
-- [ ] Spec tables updated
-- [ ] No OpenAI/Playwright/Lighthouse call in a route loader/action
+- [ ] Rule is reachable from a scan scope
+- [ ] No OpenAI, PageSpeed or storefront fetch in a route loader/action
 - [ ] Rule has a remedy in `app/remedies/catalog.ts`
 - [ ] No UI copy promises StoreRx will change the store
 - [ ] GraphQL validated

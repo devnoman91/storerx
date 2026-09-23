@@ -18,7 +18,7 @@ interface AdminApiClient {
 }
 
 // Admin's ProductSortKeys has no BEST_SELLING (that is a Storefront API key),
-// so this is FEATURES.md §2's stated fallback: newest first. True top-sellers
+// so this falls back to newest first. True top-sellers
 // needs order data, which is a separate query.
 /** Collections fetched before picking the largest few. */
 const COLLECTION_SAMPLE_SIZE = 50;
@@ -67,7 +67,7 @@ const PRODUCTS_QUERY = `
 `;
 
 // CollectionSortKeys has no PRODUCTS_COUNT, so "largest by product count"
-// (FEATURES.md §2) is done client-side over a wider page of collections.
+// is done client-side over a wider page of collections.
 const COLLECTIONS_QUERY = `
   query GetCollections($first: Int!) {
     collections(first: $first, sortKey: UPDATED_AT, reverse: true) {

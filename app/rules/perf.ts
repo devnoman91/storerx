@@ -1,5 +1,5 @@
 /**
- * Performance rules (FEATURES.md §6)
+ * Performance rules
  *
  * Input is measured Lighthouse/PageSpeed data, not HTML. Every number
  * reported in a finding is a measurement — thresholds come from Lighthouse's
