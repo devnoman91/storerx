@@ -8,7 +8,7 @@
  * were retired — see CheckoutSettings in ./types.
  */
 
-import type { Rule, RuleContext, Finding } from "./types";
+import { UNCHECKED, type Rule, type RuleContext, type RuleResult } from "./types";
 
 export const checkoutRules: Rule[] = [
   {
@@ -16,9 +16,10 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "high",
     description: "Express wallets supported",
-    check: (ctx: RuleContext): Finding | null => {
+    check: (ctx: RuleContext): RuleResult => {
       const settings = ctx.shopData?.checkoutSettings;
-      if (!settings) return null;
+      // No settings collected means nothing was checked — not a pass.
+      if (!settings) return UNCHECKED;
 
       const anyWallet =
         settings.shopPaySupported || settings.applePaySupported || settings.googlePaySupported;
@@ -46,9 +47,10 @@ export const checkoutRules: Rule[] = [
     page: "checkout",
     severity: "high",
     description: "Guest checkout",
-    check: (ctx: RuleContext): Finding | null => {
+    check: (ctx: RuleContext): RuleResult => {
       const settings = ctx.shopData?.checkoutSettings;
-      if (!settings || settings.guestCheckoutEnabled) return null;
+      if (!settings) return UNCHECKED;
+      if (settings.guestCheckoutEnabled) return null;
 
       return {
         ruleId: "chk.guest",

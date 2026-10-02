@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkoutRules } from "../../app/rules/checkout";
+import { UNCHECKED } from "../../app/rules/types";
 import type { CheckoutSettings, RuleContext, ShopData } from "../../app/rules/types";
 import { checked } from "./helpers";
 
@@ -60,9 +61,9 @@ describe("chk.guest", () => {
 });
 
 describe("checkout rules without data", () => {
-  it("stay silent when checkout settings were not collected", () => {
+  it("report unchecked, not passed, when checkout settings were not collected", () => {
     for (const r of checkoutRules) {
-      expect(r.check({ html: "" }), r.id).toBeNull();
+      expect(r.check({ html: "" }), r.id).toBe(UNCHECKED);
     }
   });
 
