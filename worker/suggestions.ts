@@ -9,10 +9,11 @@
 import prisma from "../app/db.server";
 import { unauthenticated } from "../app/shopify.server";
 import { logUsage } from "../app/ai/generate";
-import { generateAltText, generateDescription, generateSeo } from "../app/ai/prompts";
+import { generateAltText, generateDescription, generateFaq, generateSeo } from "../app/ai/prompts";
 import { draftsRemaining } from "../app/billing/billing.server";
 import { NonRetryableError } from "../app/errors";
 import type { SuggestionKind } from "../app/remedies/types";
+import { serializeFaq } from "../app/suggestions/faq";
 import {
   claimNextSuggestion,
   completeDraft,
@@ -197,6 +198,34 @@ async function draftDescription(
   };
 }
 
+async function draftFaq(
+  admin: AdminApiClient,
+  claimed: ClaimedSuggestion,
+  brandVoice: string | null,
+): Promise<DraftResult> {
+  const product = await loadProduct(admin, claimed.targetId);
+  const result = await generateFaq(
+    {
+      productTitle: product.title,
+      productDescription: stripHtml(product.descriptionHtml),
+      productType: product.productType ?? undefined,
+      vendor: product.vendor ?? undefined,
+      variants: product.variants.nodes.map((variant) => variant.title),
+      tags: product.tags,
+    },
+    brandVoice ?? undefined,
+  );
+
+  return {
+    // The page had no FAQ — that is what the issue says — so there is nothing
+    // to compare against.
+    current: null,
+    suggested: serializeFaq(result.data.questions),
+    model: "gpt-4.1-mini",
+    usage: result.usage,
+  };
+}
+
 async function runDraft(claimed: ClaimedSuggestion): Promise<void> {
   const shop = await prisma.shop.findUnique({ where: { id: claimed.shopId } });
   if (!shop) throw new NonRetryableError("This store is no longer connected to StoreRx.");
@@ -229,6 +258,9 @@ async function runDraft(claimed: ClaimedSuggestion): Promise<void> {
       break;
     case "product_description":
       result = await draftDescription(admin, claimed, shop.brandVoice);
+      break;
+    case "faq":
+      result = await draftFaq(admin, claimed, shop.brandVoice);
       break;
     default:
       throw new NonRetryableError(`StoreRx cannot draft "${claimed.kind}".`);

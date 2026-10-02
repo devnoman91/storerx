@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { SUGGESTION_LABELS } from "../remedies/actions";
 import type { SuggestionKind } from "../remedies/types";
+import { parseFaq, type FaqEntry } from "../suggestions/faq";
 import { Callout } from "./primitives";
 import type { IconName, Tone } from "./tokens";
 
@@ -195,6 +196,33 @@ function Comparison({
 }
 
 /**
+ * A drafted FAQ, entry by entry. Themes hold FAQs as one collapsible block per
+ * question, so each question and answer gets its own copy buttons.
+ */
+function FaqComparison({ entries }: { entries: FaqEntry[] }) {
+  return (
+    <s-stack direction="block" gap="small">
+      <s-paragraph color="subdued">
+        Keep the questions you want, then paste each one into a collapsible content block on your
+        product template in the theme editor — or add them to the product description.
+      </s-paragraph>
+      {entries.map((entry, index) => (
+        <s-box key={index} padding="small" background="subdued" borderRadius="base">
+          <s-stack direction="block" gap="small-300">
+            <s-text type="strong">{entry.question}</s-text>
+            <s-text>{entry.answer}</s-text>
+            <s-stack direction="inline" gap="small-300">
+              <CopyButton value={entry.question} label="Copy question" variant="tertiary" />
+              <CopyButton value={entry.answer} label="Copy answer" variant="tertiary" />
+            </s-stack>
+          </s-stack>
+        </s-box>
+      ))}
+    </s-stack>
+  );
+}
+
+/**
  * Drafted copy for one resource. StoreRx writes the suggestion; the merchant
  * reviews it and pastes it into Shopify themselves. The credit cost is stated
  * before the button is pressed, never after.
@@ -243,11 +271,16 @@ export function SuggestedCopy({
   }
 
   if (draft.status === "ready" && draft.suggested) {
+    const faq = kind === "faq" ? parseFaq(draft.suggested) : null;
     return (
       <s-stack direction="block" gap="small">
-        <Comparison current={draft.current} suggested={draft.suggested} heading={labels.heading} />
+        {faq ? (
+          <FaqComparison entries={faq} />
+        ) : (
+          <Comparison current={draft.current} suggested={draft.suggested} heading={labels.heading} />
+        )}
         <s-stack direction="inline" gap="small-300" alignItems="center">
-          <CopyButton value={draft.suggested} label={`Copy ${labels.noun}`} />
+          {!faq && <CopyButton value={draft.suggested} label={`Copy ${labels.noun}`} />}
           {adminHref && (
             <s-button variant="primary" icon="external" href={adminHref}>
               Edit in Shopify Admin

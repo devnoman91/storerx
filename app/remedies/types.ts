@@ -21,7 +21,12 @@ export type RemedyKind =
  * Concrete copy StoreRx can draft for the merchant to review and paste.
  * Only ever generated on request, one item at a time.
  */
-export type SuggestionKind = "alt_text" | "seo_title" | "seo_meta" | "product_description";
+export type SuggestionKind =
+  | "alt_text"
+  | "seo_title"
+  | "seo_meta"
+  | "product_description"
+  | "faq";
 
 /** Which part of Shopify admin an issue is resolved in. */
 export type AdminArea = "product" | "collection" | "settings" | "theme";

@@ -234,6 +234,7 @@ const SUGGESTION_NOUN: Record<SuggestionKind, string> = {
   seo_title: "an SEO title",
   seo_meta: "a meta description",
   product_description: "a description",
+  faq: "FAQ questions and answers",
 };
 
 export default function IssueDetail() {

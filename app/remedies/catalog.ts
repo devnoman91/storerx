@@ -51,7 +51,9 @@ export const RULE_REMEDIES: Record<string, RuleRemedy> = {
   "prod.price.near.cta": theme("product"),
   "prod.desc.short": productCopy("product_description"),
   "prod.desc.long": productCopy("product_description"),
-  "prod.faq": theme("product"),
+  // StoreRx drafts the questions; the merchant pastes them into the theme's
+  // collapsible blocks or the product description.
+  "prod.faq": productCopy("faq"),
   "prod.trust.badges": theme("product"),
   "prod.crosssell": theme("product"),
   "prod.variants.oos": product,

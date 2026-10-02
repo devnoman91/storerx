@@ -207,7 +207,7 @@ function DraftHistory({ drafts }: { drafts: DraftRow[] }) {
     return (
       <s-section heading="Drafted copy">
         <StateCard icon="wand" heading="No copy drafted yet">
-          When you ask StoreRx to draft alt text, an SEO title or a description, it appears here.
+          When you ask StoreRx to draft alt text, an SEO title, a description or a FAQ, it appears here.
           StoreRx drafts it — you decide whether to use it.
         </StateCard>
       </s-section>

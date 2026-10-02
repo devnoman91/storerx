@@ -44,6 +44,13 @@ export const SUGGESTION_LABELS: Record<
     redraft: "Draft another",
     heading: "Suggested description",
   },
+  faq: {
+    noun: "FAQ",
+    view: "View suggested FAQ",
+    draft: "Draft FAQ",
+    redraft: "Draft another",
+    heading: "Suggested FAQ",
+  },
 };
 
 const SETTINGS_LABELS: Record<string, string> = {
