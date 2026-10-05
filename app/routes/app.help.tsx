@@ -6,10 +6,16 @@ import { TRIAL_DAYS } from "../billing/plans";
 import { HowItWorks } from "../components/how-it-works";
 import { Callout } from "../components/primitives";
 
+const DEFAULT_SUPPORT_EMAIL = "hrjobs@nodeagency.co";
+
+/** StoreRx's public pages on the Node Agency site. */
+const FAQ_URL = "https://nodeagency.co/storerx/faq";
+const PRIVACY_URL = "https://nodeagency.co/storerx/privacy";
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  // Set per deployment, so the address can change without a code release.
-  return { supportEmail: process.env.SUPPORT_EMAIL || null };
+  // SUPPORT_EMAIL overrides the address per deployment, without a code release.
+  return { supportEmail: process.env.SUPPORT_EMAIL || DEFAULT_SUPPORT_EMAIL };
 };
 
 const SETUP_STEPS: { title: string; items: string[] }[] = [
@@ -126,14 +132,10 @@ export default function Help() {
       </s-section>
 
       <s-section heading="Contact support">
-        {supportEmail ? (
-          <s-stack direction="block" gap="small">
-            <s-paragraph>Stuck, or found something that looks wrong? Email us and we&apos;ll get back to you.</s-paragraph>
-            <s-link href={`mailto:${supportEmail}`}>{supportEmail}</s-link>
-          </s-stack>
-        ) : (
-          <s-paragraph color="subdued">Support contact details will be added here soon.</s-paragraph>
-        )}
+        <s-stack direction="block" gap="small">
+          <s-paragraph>Stuck, or found something that looks wrong? Email us and we&apos;ll get back to you.</s-paragraph>
+          <s-link href={`mailto:${supportEmail}`}>{supportEmail}</s-link>
+        </s-stack>
       </s-section>
 
       <s-section heading="More">
@@ -143,6 +145,12 @@ export default function Help() {
           </s-button>
           <s-button variant="tertiary" icon="clock" href="/app/history">
             Scan history
+          </s-button>
+          <s-button variant="tertiary" icon="question-circle" href={FAQ_URL} target="_blank">
+            FAQs
+          </s-button>
+          <s-button variant="tertiary" icon="lock" href={PRIVACY_URL} target="_blank">
+            Privacy policy
           </s-button>
         </s-stack>
       </s-section>
