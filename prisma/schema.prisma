@@ -218,10 +218,10 @@ model PageScore {
   lastScannedAt DateTime @default(now())
 }
 
-// Copy StoreRx drafted for the merchant to review and paste in themselves.
-// Never applied to the store: there is no apply or undo, by design. Drafted
-// one item at a time, only when the merchant asks, so a large catalog cannot
-// silently consume a plan's AI allowance.
+// Copy StoreRx drafted for the merchant to review. It reaches the store only
+// if the merchant approves that one draft (app/suggestions/apply.ts), or
+// pastes it in themselves. Drafted one item at a time, only when the merchant
+// asks, so a large catalog cannot silently consume a plan's AI allowance.
 model Suggestion {
   id     String @id @default(cuid())
   shopId String
@@ -245,6 +245,11 @@ model Suggestion {
   current   String?
   suggested String?
   error     String?
+
+  /// Set when the merchant approved this draft and StoreRx wrote it to the
+  /// store. `previous` is what it replaced, kept so the change can be undone.
+  appliedAt DateTime?
+  previous  String?
 
   createdAt DateTime  @default(now())
   readyAt   DateTime?

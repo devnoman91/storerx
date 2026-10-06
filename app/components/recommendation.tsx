@@ -3,8 +3,8 @@
  *
  * The order is deliberate and identical for every issue: what was found, the
  * evidence for it, why it matters, the recommended treatment, then how to
- * carry it out. Drafted copy appears only where Shopify has a field to paste
- * it into, and always beside the value it would replace.
+ * carry it out. Drafted copy appears only where Shopify has a field for it,
+ * and always beside the value it would replace.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -158,6 +158,17 @@ export interface DraftView {
   current: string | null;
   suggested: string | null;
   error: string | null;
+  /** When the merchant approved this draft and StoreRx wrote it to the store. */
+  appliedAt: string | null;
+}
+
+/** Applying an approved draft to the store, where Shopify has a field for it. */
+export interface ApplyControls {
+  /** Whether the store has allowed StoreRx to make changes. */
+  granted: boolean;
+  onAllow: () => void;
+  onApply: () => void;
+  onUndo: () => void;
 }
 
 /** Current value beside the suggested one, so the change is obvious at a glance. */
@@ -223,9 +234,10 @@ function FaqComparison({ entries }: { entries: FaqEntry[] }) {
 }
 
 /**
- * Drafted copy for one resource. StoreRx writes the suggestion; the merchant
- * reviews it and pastes it into Shopify themselves. The credit cost is stated
- * before the button is pressed, never after.
+ * Drafted copy for one resource. StoreRx writes the suggestion and the
+ * merchant reviews it. Nothing reaches the store unless they approve that one
+ * draft — or paste it in themselves. The credit cost is stated before the
+ * button is pressed, never after.
  */
 export function SuggestedCopy({
   kind,
@@ -234,6 +246,7 @@ export function SuggestedCopy({
   busy,
   disabledReason,
   adminHref,
+  apply,
 }: {
   kind: SuggestionKind;
   draft: DraftView;
@@ -242,6 +255,8 @@ export function SuggestedCopy({
   /** Why drafting is unavailable, e.g. no AI credits left. */
   disabledReason?: string | null;
   adminHref?: string | null;
+  /** Null where the draft has no field StoreRx can write to. */
+  apply?: ApplyControls | null;
 }) {
   const labels = SUGGESTION_LABELS[kind];
 
@@ -279,17 +294,50 @@ export function SuggestedCopy({
         ) : (
           <Comparison current={draft.current} suggested={draft.suggested} heading={labels.heading} />
         )}
+        {apply && draft.appliedAt && (
+          <s-stack direction="inline" gap="small-300" alignItems="center">
+            <s-icon type="check-circle" tone="success" size="small" />
+            <s-text color="subdued">
+              You approved this and StoreRx put it in your store on {draft.appliedAt}. The next
+              scan will verify it.
+            </s-text>
+          </s-stack>
+        )}
         <s-stack direction="inline" gap="small-300" alignItems="center">
+          {apply && draft.appliedAt ? (
+            <s-button variant="secondary" icon="undo" disabled={busy} onClick={apply.onUndo}>
+              Undo
+            </s-button>
+          ) : (
+            apply && (
+              <s-button
+                variant="primary"
+                icon="check"
+                disabled={busy}
+                onClick={apply.granted ? apply.onApply : apply.onAllow}
+              >
+                {apply.granted ? "Approve and apply" : "Allow StoreRx to apply this"}
+              </s-button>
+            )
+          )}
           {!faq && <CopyButton value={draft.suggested} label={`Copy ${labels.noun}`} />}
           {adminHref && (
-            <s-button variant="primary" icon="external" href={adminHref}>
+            <s-button variant={apply ? "tertiary" : "primary"} icon="external" href={adminHref}>
               Edit in Shopify Admin
             </s-button>
           )}
-          <s-button variant="tertiary" icon="refresh" disabled={busy} onClick={onDraft}>
-            {labels.redraft}
-          </s-button>
+          {!draft.appliedAt && (
+            <s-button variant="tertiary" icon="refresh" disabled={busy} onClick={onDraft}>
+              {labels.redraft}
+            </s-button>
+          )}
         </s-stack>
+        {apply && !apply.granted && !draft.appliedAt && (
+          <s-text color="subdued">
+            StoreRx can only read your store until you allow it to make changes. Shopify will ask
+            you to confirm, once. After that, each draft is still applied only when you approve it.
+          </s-text>
+        )}
       </s-stack>
     );
   }

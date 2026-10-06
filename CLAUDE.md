@@ -1,9 +1,9 @@
 @AGENTS.md
 
 # StoreRx — Claude Code Project Guide
-AI Conversion Doctor for Shopify. Audits a store area by area (CRO + performance + SEO + images), scores it, explains what it finds and recommends how to solve it. The merchant makes every change — StoreRx never writes to the store.
+AI Conversion Doctor for Shopify. Audits a store area by area (CRO + performance + SEO + images), scores it, explains what it finds and recommends how to solve it. The merchant makes every change, except drafted copy they approve, which StoreRx applies for them.
 
-**The code is the spec.** There is no separate spec document; the old `docs/FEATURES.md` described an apply-and-undo product StoreRx no longer is. Before building, read the module that owns the behaviour:
+**The code is the spec.** There is no separate spec document; the old `docs/FEATURES.md` described a different, broader apply-and-undo product. Before building, read the module that owns the behaviour:
 
 | Question | Source of truth |
 |---|---|
@@ -18,7 +18,7 @@ AI Conversion Doctor for Shopify. Audits a store area by area (CRO + performance
 ## Non-negotiable rules
 
 1. **Code finds problems, AI explains and advises.** Every detectable issue is a deterministic rule in `app/rules/<page>.ts`. Never ask the LLM "does this page have reviews?".
-2. **AI never writes to the store, full stop.** StoreRx detects, explains and recommends; the merchant makes every change. Where a rule's problem is solved is declared in `app/remedies/catalog.ts` (`admin` / `settings` / `theme` / `messaging`) and the UI turns that into a contextual action. Copy StoreRx drafts (`Suggestion`) is shown for review and copying — never applied. Never add an apply/undo path, and never label anything "Fix with AI".
+2. **StoreRx writes to the store only when the merchant approves one draft.** StoreRx detects, explains and recommends; the merchant makes every change. Where a rule's problem is solved is declared in `app/remedies/catalog.ts` (`admin` / `settings` / `theme` / `messaging`) and the UI turns that into a contextual action. The single exception is copy StoreRx drafted (`Suggestion`) for a field Shopify has — SEO title, meta description, product description, alt text: the merchant may approve a draft and StoreRx writes that one field (`app/suggestions/apply.ts`), with undo. Never write without an approval click, never in bulk, never over a value edited since the draft, and never anything else (theme, settings, prices, products). Write access is an optional scope requested on first use; installs stay read-only. Applying moves the issue to `awaiting_verification` — only a scan resolves. Never label anything "Fix with AI".
 3. **No invented numbers.** Impact = High/Medium/Low. Never show "+X% conversion".
 4. **All LLM calls use Structured Outputs** via the single wrapper `app/ai/generate.ts`. No free-text parsing. No direct `openai` imports elsewhere.
 5. **No LLM calls, PageSpeed requests or storefront fetches inside request handlers.** Everything heavy runs in the worker (`worker/`). The job queue is the `Audit` table itself — workers claim `pending` rows with `FOR UPDATE SKIP LOCKED`. No external broker.
@@ -41,7 +41,7 @@ app/
   rules/page.ts      pageFor(html) — the parsed page every page rule reads
   scans/             scan scopes, the steps a scan walks, coverage
   remedies/          where each rule's problem is solved + the actions offered
-  suggestions/       drafted copy queue (per item, on request)
+  suggestions/       drafted copy queue (per item, on request) + applying an approved draft
   issues/            issue identity, reconciliation across scans, persistence
   scoring/           score calculation + weights
   billing/           plans, allowances, Shopify Billing API

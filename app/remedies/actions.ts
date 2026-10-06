@@ -62,8 +62,8 @@ const SETTINGS_LABELS: Record<string, string> = {
 
 /** One-line statement of who makes the change, shown on the detail page. */
 export const OWNERSHIP: Record<RemedyKind, string> = {
-  admin: "You make this change in Shopify admin. StoreRx never edits your store.",
-  settings: "You change this in your Shopify settings. StoreRx never edits your store.",
+  admin: "You make this change in Shopify admin. StoreRx changes nothing in your store unless you approve it.",
+  settings: "You change this in your Shopify settings. StoreRx cannot change settings for you.",
   theme: "You make this change in your theme editor. StoreRx never edits your storefront.",
   messaging: "This is a copy and positioning change for you to make. StoreRx never edits your storefront.",
 };

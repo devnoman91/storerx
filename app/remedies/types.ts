@@ -1,9 +1,10 @@
 /**
  * How a merchant acts on an issue.
  *
- * StoreRx never writes to the store. It detects a problem, explains it,
- * recommends the best solution, and then sends the merchant to the right
- * place to make the change themselves. What "the right place" is depends on
+ * StoreRx detects a problem, explains it, recommends the best solution, and
+ * then sends the merchant to the right place to make the change themselves.
+ * The one exception is drafted copy the merchant approves, which StoreRx
+ * writes for them (app/suggestions/apply.ts). What "the right place" is depends on
  * the issue, so every rule declares one of these — and the UI reads it to
  * decide which actions to offer.
  */
@@ -18,7 +19,8 @@ export type RemedyKind =
   | "messaging";
 
 /**
- * Concrete copy StoreRx can draft for the merchant to review and paste.
+ * Concrete copy StoreRx can draft for the merchant to review, then approve
+ * or paste in themselves.
  * Only ever generated on request, one item at a time.
  */
 export type SuggestionKind =

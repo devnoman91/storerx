@@ -48,15 +48,19 @@ once however many pages or images it hit (`collapseByRule`). Overall = weighted 
 
 ## Adding drafted copy (a `SuggestionKind`)
 
-StoreRx never applies a change. It can *draft* copy for a merchant to review and paste in
-themselves, and only for fields Shopify actually exposes.
+StoreRx *drafts* copy for a merchant to review, and only for fields Shopify actually exposes.
+A draft reaches the store only when the merchant approves that one draft, or pastes it in
+themselves.
 
 1. Prompt file `app/ai/prompts/<name>.ts`; call only via `generate()`, never import `openai` directly.
 2. Add the kind to `SuggestionKind` in `app/remedies/types.ts` and a label set in
    `app/remedies/actions.ts` (`SUGGESTION_LABELS`).
 3. Point the rule at it in `app/remedies/catalog.ts` — `suggestion` is only valid on `kind: "admin"`.
 4. Handle it in `worker/suggestions.ts`: read the current value from Admin GraphQL, generate,
-   store `current` + `suggested`. Never write back.
+   store `current` + `suggested`. The worker never writes back.
+   To let the merchant approve and apply it, give the kind a scope and an operation in
+   `app/suggestions/apply.ts` — one field, one resource, and the scope must be in
+   `optional_scopes` in `shopify.app.toml`. A kind with no Shopify field (a FAQ) stays copy-only.
 5. Drafts count against the plan's `aiDrafts` allowance (`app/billing/plans.ts`); check
    `draftsRemaining()` in `app/billing/billing.server.ts` before queueing one.
 

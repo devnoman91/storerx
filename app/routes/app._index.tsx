@@ -1496,8 +1496,8 @@ export default function Dashboard() {
           merchant has to rule out. */}
       <s-section>
         <Callout icon="shield-check-mark">
-          StoreRx examines your store and recommends what to change. You make every change
-          yourself — it never edits your store, your products or your theme.
+          StoreRx examines your store and recommends what to change. Nothing in your store
+          changes unless you approve it, and StoreRx never edits your theme.
         </Callout>
       </s-section>
     </s-page>

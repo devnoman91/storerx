@@ -6,7 +6,8 @@
  * queue, claimed the same way audits are (app/queue.server.ts): one row at a
  * time, `FOR UPDATE SKIP LOCKED`, no broker.
  *
- * A draft is only ever read by the merchant. Nothing here writes to the store.
+ * Nothing here writes to the store. A draft only reaches it when the merchant
+ * approves it (app/suggestions/apply.server.ts).
  */
 
 import prisma from "../db.server";
@@ -55,6 +56,8 @@ export async function requestDraft(request: DraftRequest): Promise<{ id: string 
       suggested: null,
       error: null,
       readyAt: null,
+      appliedAt: null,
+      previous: null,
       targetTitle,
       imageUrl,
     },

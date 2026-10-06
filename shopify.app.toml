@@ -6,11 +6,14 @@ application_url = "https://storerx.fly.dev"
 embedded = true
 
 [access_scopes]
-# Read-only. StoreRx recommends changes and the merchant makes them, so it
-# never needs write access — asking for it on the install screen would
-# contradict the promise. Every query's scope need was checked with the Admin
-# API validator; read_products covers all of them.
+# Installed read-only: scanning never needs write access, and asking for it
+# on the install screen would overstate what StoreRx does by default. Every
+# query's scope need was checked with the Admin API validator; read_products
+# covers all of them.
 scopes = "read_products,read_content,read_themes"
+# Asked for only when a merchant chooses to have StoreRx apply a draft they
+# approved (app/suggestions/apply.ts). A store that never does stays read-only.
+optional_scopes = [ "write_products", "write_files" ]
 
 [webhooks]
 api_version = "2026-10"

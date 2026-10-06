@@ -11,6 +11,8 @@ import { isCatalogPage } from "../scoring";
 import { SCAN_SCOPES, scopeForRule } from "../scans/scopes";
 import { requestDraft, reapStaleDrafts } from "../suggestions/queue.server";
 import { draftTargetFor } from "../suggestions/target";
+import { APPLY_SCOPES, canApply, isAppliable } from "../suggestions/apply";
+import { applySuggestion, undoSuggestion } from "../suggestions/apply.server";
 import { actionsFor, OWNERSHIP, REMEDY_LABELS, type IssueStatus } from "../remedies/actions";
 import { adminUrl } from "../remedies/links";
 import type { RemedyKind, SuggestionKind } from "../remedies/types";
@@ -29,8 +31,23 @@ import {
   type DraftView,
 } from "../components/recommendation";
 
+/**
+ * Scopes this store has granted. Read from Shopify rather than the session:
+ * write access is optional, and a merchant can grant or revoke it at any time.
+ */
+async function grantedScopes(scopes: { query: () => Promise<{ granted: string[] }> }): Promise<string[]> {
+  try {
+    return (await scopes.query()).granted;
+  } catch (error) {
+    // Unknown is treated as not granted: the merchant is asked rather than
+    // offered a button that would fail.
+    console.error("[issues] could not read granted scopes:", error);
+    return [];
+  }
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, scopes } = await authenticate.admin(request);
   const ruleId = params.ruleId ?? "";
 
   const shop = await prisma.shop.findUnique({ where: { domain: session.shop } });
@@ -72,6 +89,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         : "open";
 
   const catalog = isCatalogPage(first.pageType);
+  const appliable = isAppliable(first.suggestionKind);
+  const writeGranted =
+    appliable && canApply(first.suggestionKind!, await grantedScopes(scopes));
   const draftByTarget = new Map(drafts.map((draft) => [`${draft.issueId}:${draft.targetId}`, draft]));
   const [credits, scansLeft] = await Promise.all([draftsRemaining(shop), scansRemaining(shop)]);
 
@@ -98,6 +118,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         current: draft?.current ?? null,
         suggested: draft?.suggested ?? null,
         error: draft?.error ?? null,
+        appliedAt: draft?.appliedAt ? draft.appliedAt.toLocaleString() : null,
       } satisfies DraftView,
     };
   });
@@ -127,6 +148,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     remedyLabel: REMEDY_LABELS[first.remedy as RemedyKind] ?? "Advice",
     ownership: OWNERSHIP[first.remedy as RemedyKind] ?? OWNERSHIP.messaging,
     suggestionKind: first.suggestionKind as SuggestionKind | null,
+    // Whether StoreRx can write this kind of draft to the store at all, and
+    // whether this store has allowed it to.
+    appliable,
+    writeGranted,
     status,
     isNew: shown.some((issue) => issue.openedAsNew && issue.openedAuditId === issue.lastSeenAuditId),
     verificationFailed: shown.some((issue) => issue.verificationFailedAt !== null),
@@ -149,7 +174,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin, scopes } = await authenticate.admin(request);
   const ruleId = params.ruleId ?? "";
 
   const shop = await prisma.shop.findUnique({ where: { domain: session.shop } });
@@ -190,6 +215,51 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageUrl: issue.imageUrl,
     });
     return { ok: true as const };
+  }
+
+  if (intent === "allowApply") {
+    // Redirects the merchant to Shopify's consent screen when the scopes are
+    // not granted yet; returns normally when they already are.
+    await scopes.request(APPLY_SCOPES);
+    return { ok: true as const };
+  }
+
+  if (intent === "apply" || intent === "undo") {
+    const issueId = String(formData.get("issueId") ?? "");
+    const issue = await prisma.issue.findFirst({ where: { id: issueId, shopId: shop.id } });
+    const targetId = issue ? draftTargetFor(issue) : null;
+    const suggestion =
+      issue?.suggestionKind && targetId
+        ? await prisma.suggestion.findUnique({
+            where: {
+              issueId_targetId_kind: { issueId: issue.id, targetId, kind: issue.suggestionKind },
+            },
+          })
+        : null;
+    if (!suggestion || suggestion.status !== "ready") {
+      return { ok: false as const, error: "There is no draft to apply for this one yet." };
+    }
+
+    if (!canApply(suggestion.kind, await grantedScopes(scopes))) {
+      return {
+        ok: false as const,
+        error: "StoreRx does not have permission to change this in your store. Allow it first.",
+      };
+    }
+
+    try {
+      const result =
+        intent === "apply"
+          ? await applySuggestion(admin, suggestion)
+          : await undoSuggestion(admin, suggestion);
+      return result.ok ? { ok: true as const } : { ok: false as const, error: result.error };
+    } catch (error) {
+      console.error(`[issues] ${intent} failed for suggestion ${suggestion.id}:`, error);
+      return {
+        ok: false as const,
+        error: "Shopify did not accept the change. Nothing was changed — try again in a moment.",
+      };
+    }
   }
 
   if (intent === "markResolved" || intent === "reopen") {
@@ -387,8 +457,9 @@ export default function IssueDetail() {
         {data.suggestionKind ? (
           <s-stack direction="block" gap="small-300">
             <s-paragraph color="subdued">
-              StoreRx can draft {SUGGESTION_NOUN[data.suggestionKind]} for each of these. Review it,
-              then paste it into Shopify yourself — nothing is changed for you.
+              {data.appliable
+                ? `StoreRx can draft ${SUGGESTION_NOUN[data.suggestionKind]} for each of these. Review it, then approve it and StoreRx puts it in your store — or paste it in yourself. Nothing changes until you approve it.`
+                : `StoreRx can draft ${SUGGESTION_NOUN[data.suggestionKind]} for each of these. Review it, then paste it into Shopify yourself — nothing is changed for you.`}
             </s-paragraph>
             <s-stack direction="inline" gap="small-300" alignItems="center">
               <s-icon
@@ -458,6 +529,16 @@ export default function IssueDetail() {
                     }
                     adminHref={item.adminHref}
                     onDraft={() => submit({ intent: "draft", issueId: item.id })}
+                    apply={
+                      data.appliable
+                        ? {
+                            granted: data.writeGranted,
+                            onAllow: () => submit({ intent: "allowApply" }),
+                            onApply: () => submit({ intent: "apply", issueId: item.id }),
+                            onUndo: () => submit({ intent: "undo", issueId: item.id }),
+                          }
+                        : null
+                    }
                   />
                 )}
               </s-stack>

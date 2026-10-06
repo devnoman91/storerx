@@ -30,8 +30,8 @@ const SETUP_STEPS: { title: string; items: string[] }[] = [
   {
     title: "Make the change, then have StoreRx verify it",
     items: [
-      "Every issue tells you where the change is made: Shopify admin, your Shopify settings, your theme editor, or your storefront copy. StoreRx never edits your store.",
-      "For alt text, SEO titles, meta descriptions and product descriptions, StoreRx can draft the copy for you to review and paste in yourself.",
+      "Every issue tells you where the change is made: Shopify admin, your Shopify settings, your theme editor, or your storefront copy. Nothing changes unless you approve it.",
+      "For alt text, SEO titles, meta descriptions and product descriptions, StoreRx can draft the copy for you. Review it, then approve it and StoreRx puts it in your store — with an undo — or paste it in yourself.",
       "Once you have made the change, mark the issue as resolved and re-scan that area. StoreRx confirms it and marks it Verified — or tells you it is still there.",
     ],
   },
@@ -48,7 +48,7 @@ const SETUP_STEPS: { title: string; items: string[] }[] = [
 const FAQS: [string, string][] = [
   [
     "Does StoreRx change my store?",
-    "No, and it never will. StoreRx reads your store, explains what it finds and recommends what to do — you make every change yourself. Copy it drafts for you is a suggestion to review, never applied. StoreRx blocks appear on your storefront only when you add them in the theme editor, and your theme files are never edited.",
+    "Only when you approve it. StoreRx is installed with read-only access: it reads your store, explains what it finds and recommends what to do. Where it drafts copy for you — alt text, SEO titles, meta descriptions and product descriptions — you can approve a draft and StoreRx will put it in your store, one item at a time, with an undo. Shopify asks you to allow this the first time. Everything else you change yourself. StoreRx blocks appear on your storefront only when you add them in the theme editor, and your theme files are never edited.",
   ],
   [
     "Why can't StoreRx measure my speed?",
@@ -90,8 +90,8 @@ export default function Help() {
           </s-paragraph>
           <HowItWorks />
           <Callout icon="shield-check-mark">
-            StoreRx never edits your store. Every change is one you make yourself, in Shopify admin,
-            your settings or your theme.
+            Nothing in your store changes unless you approve it. StoreRx can apply copy it drafted
+            for you once you approve it; every other change is one you make yourself.
           </Callout>
         </s-stack>
       </s-section>
