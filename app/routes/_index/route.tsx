@@ -1,7 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { redirect, Form, useLoaderData } from "react-router";
-
-import { login } from "../../shopify.server";
+import { redirect } from "react-router";
 
 import styles from "./styles.module.css";
 
@@ -12,43 +10,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
 
-  return { showForm: Boolean(login) };
+  return null;
 };
 
+// Shown to anyone who reaches the app outside the Shopify admin. No shop
+// domain form: installs and logins start from Shopify, never from here.
 export default function App() {
-  const { showForm } = useLoaderData<typeof loader>();
-
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>StoreRx</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          A check-up for your Shopify store: what is costing you sales, and how to solve it.
         </p>
-        {showForm && (
-          <Form className={styles.form} method="post" action="/auth/login">
-            <label className={styles.label}>
-              <span>Shop domain</span>
-              <input className={styles.input} type="text" name="shop" />
-              <span>e.g: my-shop-domain.myshopify.com</span>
-            </label>
-            <button className={styles.button} type="submit">
-              Log in
-            </button>
-          </Form>
-        )}
+        <p className={styles.note}>
+          StoreRx runs inside Shopify. To use it, open it from the Apps section of your Shopify admin.
+        </p>
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Area-by-area scans</strong>. Home, collection, product and cart pages, plus speed,
+            SEO and catalog images, each scored.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Every issue explained</strong>. What was found, why it matters, and where in
+            Shopify you solve it.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Copy drafted on request</strong>. SEO titles, descriptions and alt text you review
+            and approve before anything changes.
           </li>
         </ul>
       </div>
